@@ -98,13 +98,17 @@ function computePeopleAnalytics(prs, reviews) {
 
   const reviewers = Object.values(reviewerMap)
     .map(r => ({
-      ...r,
-      avgResponseHours: r.responseTimes.length > 0
+      login: r.login,
+      reviews_completed: r.reviewsCompleted,
+      approvals: r.approvals,
+      changes_requested: r.changesRequested,
+      pending_reviews: r.pendingReviews,
+      longest_pending_hours: Math.round(r.longestPendingHours * 10) / 10,
+      avg_response_hours: r.responseTimes.length > 0
         ? Math.round((r.responseTimes.reduce((a, b) => a + b, 0) / r.responseTimes.length) * 10) / 10
         : null,
-      longestPendingHours: Math.round(r.longestPendingHours * 10) / 10,
     }))
-    .sort((a, b) => b.pendingReviews - a.pendingReviews);
+    .sort((a, b) => b.pending_reviews - a.pending_reviews);
 
   // Author analytics
   const authorMap = {};
@@ -113,17 +117,17 @@ function computePeopleAnalytics(prs, reviews) {
     if (!authorMap[p.author_login]) {
       authorMap[p.author_login] = {
         login: p.author_login,
-        totalPRs: 0,
-        openPRs: 0,
+        total_prs: 0,
+        open_prs: 0,
         ages: [],
         reviewCycles: [],
         responseTimes: [],
       };
     }
     const am = authorMap[p.author_login];
-    am.totalPRs++;
+    am.total_prs++;
     if (p.state === 'open') {
-      am.openPRs++;
+      am.open_prs++;
       am.ages.push(now.diff(dayjs(p.created_at), 'hour', true));
     }
     if (p.review_cycles_count) am.reviewCycles.push(p.review_cycles_count);
@@ -132,19 +136,19 @@ function computePeopleAnalytics(prs, reviews) {
   const authors = Object.values(authorMap)
     .map(a => ({
       login: a.login,
-      totalPRs: a.totalPRs,
-      openPRs: a.openPRs,
-      avgPRAge: a.ages.length > 0
+      total_prs: a.total_prs,
+      open_prs: a.open_prs,
+      avg_pr_age_hours: a.ages.length > 0
         ? Math.round((a.ages.reduce((s, v) => s + v, 0) / a.ages.length) * 10) / 10
         : 0,
-      avgReviewCycles: a.reviewCycles.length > 0
+      avg_review_cycles: a.reviewCycles.length > 0
         ? Math.round((a.reviewCycles.reduce((s, v) => s + v, 0) / a.reviewCycles.length) * 10) / 10
         : 0,
-      avgResponseHours: a.responseTimes.length > 0
+      avg_response_hours: a.responseTimes.length > 0
         ? Math.round((a.responseTimes.reduce((s, v) => s + v, 0) / a.responseTimes.length) * 10) / 10
         : null,
     }))
-    .sort((a, b) => b.openPRs - a.openPRs);
+    .sort((a, b) => b.open_prs - a.open_prs);
 
   return { reviewers, authors };
 }
@@ -154,18 +158,18 @@ function computeBottlenecks(prs) {
   return prs
     .filter(p => p.state === 'open' && p.responsibility_state && !['MERGED', 'CLOSED', 'DRAFT'].includes(p.responsibility_state))
     .map(p => ({
-      prNumber: p.number,
-      prTitle: p.title,
-      prUrl: p.url,
-      responsibleLogin: p.responsible_login,
-      state: p.responsibility_state,
-      waitingHours: p.responsibility_started_at
+      number: p.number,
+      title: p.title,
+      url: p.url,
+      responsible_login: p.responsible_login,
+      responsibility_state: p.responsibility_state,
+      waiting_hours: p.responsibility_started_at
         ? Math.round(now.diff(dayjs(p.responsibility_started_at), 'hour', true) * 10) / 10
         : 0,
-      agingStatus: p.aging_status,
-      reason: p.responsibility_reason,
+      aging_status: p.aging_status,
+      responsibility_reason: p.responsibility_reason,
     }))
-    .sort((a, b) => b.waitingHours - a.waitingHours);
+    .sort((a, b) => b.waiting_hours - a.waiting_hours);
 }
 
 module.exports = { computeSummary, computePeopleAnalytics, computeBottlenecks };
