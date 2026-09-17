@@ -8,7 +8,7 @@ router.get('/:repoId', async (req, res) => {
   try {
     const { repoId } = req.params;
     const {
-      status = 'open',
+      state = 'open',
       health_status,
       author,
       search,
@@ -21,11 +21,11 @@ router.get('/:repoId', async (req, res) => {
     let query = db('pull_requests').where({ repository_id: repoId });
 
     // Filters
-    if (status && status !== 'all') {
-      if (status === 'merged') {
+    if (state && state !== 'all') {
+      if (state === 'merged') {
         query = query.where({ is_merged: true });
       } else {
-        query = query.where({ state: status });
+        query = query.where({ state });
       }
     }
     if (health_status) query = query.where({ health_status });
