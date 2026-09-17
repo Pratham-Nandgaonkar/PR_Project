@@ -1,5 +1,16 @@
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
+import {
+  CheckCircle2,
+  AlertCircle,
+  XCircle,
+  RotateCcw,
+  MessageSquare,
+  Clock,
+  GitMerge,
+  GitPullRequest
+} from 'lucide-react';
+
 dayjs.extend(relativeTime);
 
 export function formatDuration(hours) {
@@ -26,54 +37,78 @@ export function timeAgo(dateStr) {
   return dayjs(dateStr).fromNow();
 }
 
-export function getAgingColor(status) {
+export function getHealthColor(status) {
   const colors = {
-    healthy: 'text-green-400',
-    attention: 'text-yellow-400',
-    aging: 'text-orange-400',
+    on_track: 'text-green-400',
+    needs_attention: 'text-yellow-400',
+    at_risk: 'text-orange-400',
     critical: 'text-red-400',
     closed: 'text-slate-400',
   };
   return colors[status] || 'text-slate-400';
 }
 
-export function getAgingBg(status) {
+export function getHealthBg(status) {
   const colors = {
-    healthy: 'bg-green-500/10 text-green-400 border-green-500/20',
-    attention: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20',
-    aging: 'bg-orange-500/10 text-orange-400 border-orange-500/20',
+    on_track: 'bg-green-500/10 text-green-400 border-green-500/20',
+    needs_attention: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20',
+    at_risk: 'bg-orange-500/10 text-orange-400 border-orange-500/20',
     critical: 'bg-red-500/10 text-red-400 border-red-500/20',
     closed: 'bg-slate-500/10 text-slate-400 border-slate-500/20',
   };
   return colors[status] || 'bg-slate-500/10 text-slate-400 border-slate-500/20';
 }
 
-export function getResponsibilityColor(state) {
-  const colors = {
-    WAITING_FOR_REVIEW: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
-    CHANGES_REQUESTED: 'bg-orange-500/10 text-orange-400 border-orange-500/20',
-    APPROVED_WAITING_MERGE: 'bg-green-500/10 text-green-400 border-green-500/20',
-    DRAFT: 'bg-slate-500/10 text-slate-400 border-slate-500/20',
-    NO_REVIEWER: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20',
-    STALE: 'bg-slate-500/10 text-slate-400 border-slate-500/20',
-    MERGED: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
-    CLOSED: 'bg-slate-500/10 text-slate-400 border-slate-500/20',
+export function getHealthLabel(status) {
+  const labels = {
+    on_track: 'On Track',
+    needs_attention: 'Needs Attention',
+    at_risk: 'At Risk',
+    critical: 'Critical',
+    closed: 'Closed',
   };
-  return colors[state] || 'bg-slate-500/10 text-slate-400 border-slate-500/20';
+  return labels[status] || status || 'Unknown';
 }
 
-export function getResponsibilityLabel(state) {
+export function getActionItemIcon(type) {
+  switch (type) {
+    case 'NEEDS_INITIAL_REVIEW': return Clock;
+    case 'NEEDS_RE_REVIEW': return RotateCcw;
+    case 'ADDRESS_COMMENTS': return MessageSquare;
+    case 'FIX_CI': return XCircle;
+    case 'RESOLVE_CONFLICTS': return AlertCircle;
+    case 'MERGE_READY': return GitMerge;
+    default: return GitPullRequest;
+  }
+}
+
+export function getActionItemLabel(type) {
   const labels = {
-    WAITING_FOR_REVIEW: 'Waiting for Review',
-    CHANGES_REQUESTED: 'Changes Requested',
-    APPROVED_WAITING_MERGE: 'Approved',
-    DRAFT: 'Draft',
-    NO_REVIEWER: 'No Reviewer',
-    STALE: 'Stale',
-    MERGED: 'Merged',
-    CLOSED: 'Closed',
+    NEEDS_INITIAL_REVIEW: 'Needs Initial Review',
+    NEEDS_RE_REVIEW: 'Needs Re-review',
+    ADDRESS_COMMENTS: 'Address Comments',
+    FIX_CI: 'Fix CI',
+    RESOLVE_CONFLICTS: 'Resolve Conflicts',
+    MERGE_READY: 'Ready to Merge',
   };
-  return labels[state] || state || 'Unknown';
+  return labels[type] || type;
+}
+
+export function getActionItemColor(type) {
+  switch (type) {
+    case 'FIX_CI':
+    case 'RESOLVE_CONFLICTS':
+      return 'text-red-400 bg-red-500/10 border-red-500/20';
+    case 'ADDRESS_COMMENTS':
+    case 'NEEDS_RE_REVIEW':
+      return 'text-orange-400 bg-orange-500/10 border-orange-500/20';
+    case 'NEEDS_INITIAL_REVIEW':
+      return 'text-yellow-400 bg-yellow-500/10 border-yellow-500/20';
+    case 'MERGE_READY':
+      return 'text-green-400 bg-green-500/10 border-green-500/20';
+    default:
+      return 'text-blue-400 bg-blue-500/10 border-blue-500/20';
+  }
 }
 
 export function hoursSince(dateStr) {

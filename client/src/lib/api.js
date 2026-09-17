@@ -29,3 +29,7 @@ export const fetchSummary = (repoId) => request(`/api/analytics/${repoId}/summar
 export const fetchPeople = (repoId) => request(`/api/analytics/${repoId}/people`);
 export const fetchTrends = (repoId) => request(`/api/analytics/${repoId}/trends`);
 export const fetchBottlenecks = (repoId) => request(`/api/analytics/${repoId}/bottlenecks`);
+export const updateRepository = (id, data) => request(`/api/repositories/${id}`, {
+  method: 'PUT',
+  body: JSON.stringify(data),
+});

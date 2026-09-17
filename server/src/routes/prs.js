@@ -8,11 +8,9 @@ router.get('/:repoId', async (req, res) => {
   try {
     const { repoId } = req.params;
     const {
-      state = 'open',
-      aging,
-      responsibility,
+      status = 'open',
+      health_status,
       author,
-      reviewer,
       search,
       sort = 'created_at',
       order = 'desc',
@@ -23,11 +21,15 @@ router.get('/:repoId', async (req, res) => {
     let query = db('pull_requests').where({ repository_id: repoId });
 
     // Filters
-    if (state && state !== 'all') query = query.where({ state });
-    if (aging) query = query.where({ aging_status: aging });
-    if (responsibility) query = query.where({ responsibility_state: responsibility });
+    if (status && status !== 'all') {
+      if (status === 'merged') {
+        query = query.where({ is_merged: true });
+      } else {
+        query = query.where({ state: status });
+      }
+    }
+    if (health_status) query = query.where({ health_status });
     if (author) query = query.where({ author_login: author });
-    if (reviewer) query = query.where({ responsible_login: reviewer });
     if (search) {
       query = query.where(function () {
         this.where('title', 'ilike', `%${search}%`)
@@ -44,7 +46,6 @@ router.get('/:repoId', async (req, res) => {
     const sortMap = {
       created_at: 'created_at',
       age: 'created_at',
-      waiting: 'responsibility_started_at',
       activity: 'last_activity_at',
       updated: 'updated_at',
     };
@@ -88,6 +89,21 @@ router.get('/:repoId/:number', async (req, res) => {
     const reviewCycles = await db('review_cycles')
       .where({ pull_request_id: pr.id })
       .orderBy('cycle_number', 'asc');
+
+    const actionItems = await db('pr_action_items')
+      .where({ pull_request_id: pr.id })
+      .orderBy('waiting_biz_hours', 'desc');
+
+    const reviewers = await db('pr_reviewers')
+      .where({ pull_request_id: pr.id })
+      .orderBy('assignment_order', 'asc');
+
+    const commentThreads = await db('pr_comment_threads')
+      .where({ pull_request_id: pr.id })
+      .orderBy('created_at', 'asc');
+
+    const checks = await db('pr_checks')
+      .where({ pull_request_id: pr.id });
 
     // Build timeline
     const timeline = [];
@@ -170,7 +186,17 @@ router.get('/:repoId/:number', async (req, res) => {
       });
     }
 
-    res.json({ pr, reviews, events, reviewCycles, timeline });
+    res.json({
+      pr,
+      reviews,
+      events,
+      reviewCycles,
+      timeline,
+      actionItems,
+      reviewers,
+      commentThreads,
+      checks
+    });
   } catch (error) {
     console.error('Error fetching PR detail:', error);
     res.status(500).json({ error: 'Failed to fetch PR detail' });

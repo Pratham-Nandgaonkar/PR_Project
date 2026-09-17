@@ -28,7 +28,23 @@ function resetApiCallCount() {
   apiCallCount = 0;
 }
 
-async function fetchPullRequests(owner, repo, state = 'open', perPage = 100) {
+async function fetchPullRequests(owner, repo, state = 'open', perPage = 100, filters = []) {
+  if (filters && filters.length > 0) {
+    const filterQuery = filters.join(' ');
+    const q = `repo:${owner}/${repo} type:pr state:${state} ${filterQuery}`;
+    const response = await octokit.search.issuesAndPullRequests({
+      q,
+      per_page: perPage,
+    });
+    return response.data.items.map(issue => ({
+      ...issue,
+      head: { ref: null },
+      base: { ref: null },
+      merged_at: issue.pull_request?.merged_at || null,
+      draft: issue.draft || false,
+    }));
+  }
+
   const response = await octokit.pulls.list({
     owner,
     repo,
@@ -36,6 +52,24 @@ async function fetchPullRequests(owner, repo, state = 'open', perPage = 100) {
     per_page: perPage,
   });
   return response.data;
+}
+
+async function fetchPRComments(owner, repo, prNumber) {
+  return await octokit.paginate(octokit.pulls.listReviewComments, {
+    owner,
+    repo,
+    pull_number: prNumber,
+    per_page: 100,
+  });
+}
+
+async function fetchCheckRuns(owner, repo, ref) {
+  return await octokit.paginate(octokit.checks.listForRef, {
+    owner,
+    repo,
+    ref,
+    per_page: 100,
+  });
 }
 
 async function fetchReviews(owner, repo, prNumber) {
@@ -76,6 +110,8 @@ async function getRateLimit() {
 
 module.exports = {
   fetchPullRequests,
+  fetchPRComments,
+  fetchCheckRuns,
   fetchReviews,
   fetchPRCommits,
   fetchPREvents,

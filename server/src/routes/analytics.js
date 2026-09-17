@@ -52,7 +52,11 @@ router.get('/:repoId/bottlenecks', async (req, res) => {
   try {
     const { repoId } = req.params;
     const prs = await db('pull_requests').where({ repository_id: repoId, state: 'open' });
-    const bottlenecks = computeBottlenecks(prs).slice(0, 10);
+    const prIds = prs.map(p => p.id);
+    const actionItems = prIds.length > 0 
+      ? await db('pr_action_items').whereIn('pull_request_id', prIds) 
+      : [];
+    const bottlenecks = computeBottlenecks(prs, actionItems).slice(0, 10);
     res.json(bottlenecks);
   } catch (error) {
     console.error('Error computing bottlenecks:', error);

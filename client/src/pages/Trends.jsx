@@ -1,12 +1,14 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useRepository } from '../hooks/useRepository';
 import { useFetch } from '../hooks/useFetch';
 import { fetchTrends } from '../lib/api';
 import { formatDateShort } from '../lib/utils';
 import { LineChart, Line, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import clsx from 'clsx';
 
 export default function Trends() {
   const { selectedRepoId } = useRepository();
+  const [timeRange, setTimeRange] = useState('1M');
 
   const { data, loading } = useFetch(
     () => selectedRepoId ? fetchTrends(selectedRepoId) : Promise.resolve([]),
@@ -17,17 +19,25 @@ export default function Trends() {
   if (loading) return <div className="text-center text-slate-400 mt-10">Loading trends...</div>;
   if (!data || data.length < 2) return <div className="text-center text-slate-400 mt-10">Not enough data yet. Snapshots are created during each sync.</div>;
 
+  // Filter data based on timeRange
+  // data from backend is ordered ASC (oldest first). We want the most recent N days.
+  let filteredData = data;
+  if (timeRange === '1W') filteredData = data.slice(-7);
+  else if (timeRange === '1M') filteredData = data.slice(-30);
+  else if (timeRange === '3M') filteredData = data.slice(-90);
+  else if (timeRange === '6M') filteredData = data.slice(-180);
+
   // Format data for charts
-  const chartData = data.map(d => ({
+  const chartData = filteredData.map(d => ({
     ...d,
     date: formatDateShort(d.snapshot_at),
     avg_pr_age_days: (d.avg_pr_age_hours / 24).toFixed(1),
-  })).reverse(); // oldest to newest
+  }));
 
   const CustomTooltip = ({ active, payload, label }) => {
     if (active && payload && payload.length) {
       return (
-        <div className="bg-slate-900 border border-slate-700 p-3 rounded-lg shadow-xl text-sm">
+        <div className="bg-slate-900 border border-slate-700 p-3 rounded-lg shadow-xl text-sm z-50">
           <p className="font-bold mb-2">{label}</p>
           {payload.map((p, i) => (
             <p key={i} style={{ color: p.color }}>
@@ -42,7 +52,23 @@ export default function Trends() {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <h1 className="text-2xl font-bold">Historical Trends</h1>
+      <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4">
+        <h1 className="text-2xl font-bold">Historical Trends</h1>
+        <div className="flex bg-slate-800 p-1 rounded-lg border border-slate-700">
+          {['1W', '1M', '3M', '6M', 'All'].map(range => (
+            <button
+              key={range}
+              onClick={() => setTimeRange(range)}
+              className={clsx(
+                "px-3 py-1.5 text-sm font-medium rounded-md transition-colors",
+                timeRange === range ? "bg-slate-700 text-white shadow" : "text-slate-400 hover:text-slate-200 hover:bg-slate-700/50"
+              )}
+            >
+              {range}
+            </button>
+          ))}
+        </div>
+      </div>
       
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         

@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useRepository } from '../hooks/useRepository';
-import { addRepository, deleteRepository, triggerSync, fetchSyncStatus } from '../lib/api';
+import { addRepository, deleteRepository, triggerSync, fetchSyncStatus, updateRepository } from '../lib/api';
 import { formatDate, timeAgo } from '../lib/utils';
-import { Plus, Trash2, RefreshCw, AlertCircle, CheckCircle } from 'lucide-react';
+import { Plus, Trash2, RefreshCw, AlertCircle, CheckCircle, Save } from 'lucide-react';
 import clsx from 'clsx';
 
 export default function Settings() {
@@ -16,11 +16,32 @@ export default function Settings() {
   const [syncStatus, setSyncStatus] = useState(null);
   const [syncingRepo, setSyncingRepo] = useState(null);
 
+  const selectedRepo = repositories.find(r => r.id === selectedRepoId);
+  const [bhConfig, setBhConfig] = useState({ timezone: 'UTC', workDays: [1,2,3,4,5], workStart: 9, workEnd: 18 });
+  const [syncFilters, setSyncFilters] = useState([]);
+  const [repoSettingsLoading, setRepoSettingsLoading] = useState(false);
+  const [repoSettingsSuccess, setRepoSettingsSuccess] = useState('');
+
   useEffect(() => {
     if (selectedRepoId) {
       fetchSyncStatus(selectedRepoId).then(setSyncStatus).catch(console.error);
     }
   }, [selectedRepoId]);
+
+  useEffect(() => {
+    if (selectedRepo) {
+      let parsedBh = { timezone: 'UTC', workDays: [1,2,3,4,5], workStart: 9, workEnd: 18 };
+      let parsedFilters = [];
+      try {
+        if (selectedRepo.business_hours_config) parsedBh = typeof selectedRepo.business_hours_config === 'string' ? JSON.parse(selectedRepo.business_hours_config) : selectedRepo.business_hours_config;
+      } catch (e) {}
+      try {
+        if (selectedRepo.sync_filters) parsedFilters = typeof selectedRepo.sync_filters === 'string' ? JSON.parse(selectedRepo.sync_filters) : selectedRepo.sync_filters;
+      } catch (e) {}
+      setBhConfig(parsedBh);
+      setSyncFilters(parsedFilters);
+    }
+  }, [selectedRepo]);
 
   const handleAdd = async (e) => {
     e.preventDefault();
@@ -69,8 +90,26 @@ export default function Settings() {
     }
   };
 
+  const handleSaveRepoSettings = async () => {
+    setRepoSettingsLoading(true);
+    setRepoSettingsSuccess('');
+    try {
+      await updateRepository(selectedRepoId, {
+        business_hours_config: bhConfig,
+        sync_filters: syncFilters
+      });
+      await refetch();
+      setRepoSettingsSuccess('Settings saved successfully');
+      setTimeout(() => setRepoSettingsSuccess(''), 3000);
+    } catch (err) {
+      alert(`Failed to save settings: ${err.message}`);
+    } finally {
+      setRepoSettingsLoading(false);
+    }
+  };
+
   return (
-    <div className="max-w-4xl mx-auto space-y-8 animate-fade-in">
+    <div className="max-w-4xl mx-auto space-y-8 animate-fade-in pb-12">
       <h1 className="text-2xl font-bold">Settings</h1>
 
       <div className="bg-slate-800 rounded-xl border border-slate-700 p-6">
@@ -172,7 +211,7 @@ export default function Settings() {
 
       {selectedRepoId && syncStatus && (
         <div className="bg-slate-800 rounded-xl border border-slate-700 p-6">
-          <h2 className="text-lg font-semibold mb-4">Sync Information</h2>
+          <h2 className="text-lg font-semibold mb-4">Sync Information for {selectedRepo?.full_name}</h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div>
               <div className="text-sm text-slate-400 mb-1">Current Status</div>
@@ -191,6 +230,151 @@ export default function Settings() {
             <div>
               <div className="text-sm text-slate-400 mb-1">Next Scheduled Sync</div>
               <div className="text-slate-200">{syncStatus.next_sync_at ? formatDate(syncStatus.next_sync_at) : 'Not scheduled'}</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {selectedRepoId && (
+        <div className="bg-slate-800 rounded-xl border border-slate-700 p-6 space-y-6">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold">Repository Settings ({selectedRepo?.full_name})</h2>
+            <button
+              onClick={handleSaveRepoSettings}
+              disabled={repoSettingsLoading}
+              className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-md disabled:opacity-50 flex items-center gap-2"
+            >
+              {repoSettingsLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+              Save Settings
+            </button>
+          </div>
+          
+          {repoSettingsSuccess && (
+            <div className="p-3 bg-green-500/10 border border-green-500/20 text-green-400 rounded-lg flex items-center gap-2 text-sm">
+              <CheckCircle className="w-4 h-4" /> {repoSettingsSuccess}
+            </div>
+          )}
+
+          <div className="pt-4 border-t border-slate-700">
+            <h3 className="font-medium text-slate-200 mb-3">Sync Filters</h3>
+            <p className="text-sm text-slate-400 mb-4">Only sync pull requests matching these criteria. Leave empty to sync all open PRs.</p>
+            <div className="space-y-3">
+              {syncFilters.map((f, i) => (
+                <div key={i} className="flex gap-2">
+                  <select 
+                    value={f.filter_type || 'author'} 
+                    onChange={e => { const copy = [...syncFilters]; copy[i].filter_type = e.target.value; setSyncFilters(copy); }} 
+                    className="bg-slate-900 border border-slate-700 rounded-md px-3 py-1.5 focus:outline-none focus:border-blue-500 text-sm"
+                  >
+                    <option value="author">Author</option>
+                    <option value="label">Label</option>
+                    <option value="base_branch">Base Branch</option>
+                  </select>
+                  <input 
+                    type="text" 
+                    value={f.filter_value || ''} 
+                    onChange={e => { const copy = [...syncFilters]; copy[i].filter_value = e.target.value; setSyncFilters(copy); }} 
+                    placeholder="Value..." 
+                    className="bg-slate-900 border border-slate-700 rounded-md px-3 py-1.5 focus:outline-none focus:border-blue-500 flex-1 text-sm" 
+                  />
+                  <button 
+                    type="button" 
+                    onClick={() => setSyncFilters(syncFilters.filter((_, idx) => idx !== i))} 
+                    className="p-1.5 text-red-400 hover:bg-red-500/10 rounded-md transition-colors"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
+              <button 
+                type="button" 
+                onClick={() => setSyncFilters([...syncFilters, { filter_type: 'author', filter_value: '' }])} 
+                className="text-sm text-blue-400 flex items-center gap-1 hover:underline mt-2"
+              >
+                <Plus className="w-4 h-4" /> Add Filter
+              </button>
+            </div>
+          </div>
+
+          <div className="pt-6 border-t border-slate-700">
+            <h3 className="font-medium text-slate-200 mb-4">Business Hours Configuration</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div>
+                <label className="block text-sm text-slate-400 mb-1">Timezone</label>
+                <select 
+                  value={bhConfig.timezone || 'UTC'} 
+                  onChange={e => setBhConfig({...bhConfig, timezone: e.target.value})} 
+                  className="w-full bg-slate-900 border border-slate-700 rounded-md px-3 py-2 focus:outline-none focus:border-blue-500 text-sm"
+                >
+                  <option value="UTC">UTC</option>
+                  <option value="America/Los_Angeles">Pacific Time (PT)</option>
+                  <option value="America/New_York">Eastern Time (ET)</option>
+                  <option value="Europe/London">London (GMT/BST)</option>
+                  <option value="Europe/Berlin">Central European Time (CET)</option>
+                  <option value="Asia/Kolkata">India Standard Time (IST)</option>
+                  <option value="Asia/Tokyo">Japan Standard Time (JST)</option>
+                </select>
+              </div>
+              
+              <div>
+                <label className="block text-sm text-slate-400 mb-1">Work Days</label>
+                <div className="flex gap-2 mt-2">
+                  {[
+                    { v: 1, l: 'M' },
+                    { v: 2, l: 'T' },
+                    { v: 3, l: 'W' },
+                    { v: 4, l: 'T' },
+                    { v: 5, l: 'F' },
+                    { v: 6, l: 'S' },
+                    { v: 0, l: 'S' }
+                  ].map(day => {
+                    const isSelected = bhConfig.workDays?.includes(day.v);
+                    return (
+                      <label 
+                        key={day.v} 
+                        className={clsx(
+                          "flex items-center justify-center w-8 h-8 rounded-full border cursor-pointer select-none transition-colors", 
+                          isSelected ? "bg-blue-500/20 border-blue-500 text-blue-400" : "bg-slate-900 border-slate-700 text-slate-400 hover:border-slate-500"
+                        )}
+                      >
+                        <input 
+                          type="checkbox" 
+                          className="sr-only" 
+                          checked={isSelected} 
+                          onChange={e => {
+                            const current = bhConfig.workDays || [];
+                            if (e.target.checked) setBhConfig({...bhConfig, workDays: [...current, day.v]});
+                            else setBhConfig({...bhConfig, workDays: current.filter(d => d !== day.v)});
+                          }} 
+                        />
+                        <span className="text-xs font-semibold">{day.l}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm text-slate-400 mb-1">Start Time (24h)</label>
+                <input 
+                  type="number" 
+                  min="0" max="23" 
+                  value={bhConfig.workStart ?? 9} 
+                  onChange={e => setBhConfig({...bhConfig, workStart: parseInt(e.target.value) || 0})} 
+                  className="w-full bg-slate-900 border border-slate-700 rounded-md px-3 py-2 focus:outline-none focus:border-blue-500 text-sm" 
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm text-slate-400 mb-1">End Time (24h)</label>
+                <input 
+                  type="number" 
+                  min="0" max="24" 
+                  value={bhConfig.workEnd ?? 18} 
+                  onChange={e => setBhConfig({...bhConfig, workEnd: parseInt(e.target.value) || 0})} 
+                  className="w-full bg-slate-900 border border-slate-700 rounded-md px-3 py-2 focus:outline-none focus:border-blue-500 text-sm" 
+                />
+              </div>
             </div>
           </div>
         </div>

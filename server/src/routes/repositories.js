@@ -16,7 +16,7 @@ router.get('/', async (req, res) => {
 // POST /api/repositories
 router.post('/', async (req, res) => {
   try {
-    const { owner, name } = req.body;
+    const { owner, name, sync_filters, business_hours_config } = req.body;
     if (!owner || !name) {
       return res.status(400).json({ error: 'Owner and name are required' });
     }
@@ -38,12 +38,47 @@ router.post('/', async (req, res) => {
       name,
       full_name: `${owner}/${name}`,
       is_active: true,
+      sync_filters: sync_filters ? JSON.stringify(sync_filters) : '[]',
+      business_hours_config: business_hours_config ? JSON.stringify(business_hours_config) : null,
     }).returning('*');
 
     res.status(201).json(repo);
   } catch (error) {
     console.error('Error adding repository:', error);
     res.status(500).json({ error: 'Failed to add repository' });
+  }
+});
+
+// PUT /api/repositories/:id
+router.put('/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { sync_filters, business_hours_config } = req.body;
+    
+    const updateData = {};
+    if (sync_filters !== undefined) {
+      updateData.sync_filters = JSON.stringify(sync_filters);
+    }
+    if (business_hours_config !== undefined) {
+      updateData.business_hours_config = JSON.stringify(business_hours_config);
+    }
+    
+    if (Object.keys(updateData).length === 0) {
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+
+    const [updated] = await db('repositories')
+      .where({ id })
+      .update(updateData)
+      .returning('*');
+
+    if (!updated) {
+      return res.status(404).json({ error: 'Repository not found' });
+    }
+    res.json(updated);
+  } catch (error) {
+    console.error('Error updating repository:', error);
+    res.status(500).json({ error: 'Failed to update repository' });
   }
 });
 
