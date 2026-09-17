@@ -4,11 +4,13 @@ import { useRepository } from '../hooks/useRepository';
 import { useFetch } from '../hooks/useFetch';
 import { fetchPRs } from '../lib/api';
 import { formatDuration, hoursSince, getHealthBg, getHealthLabel, timeAgo } from '../lib/utils';
-import { Search, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Search, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import clsx from 'clsx';
 
 export default function PRList() {
   const { selectedRepoId } = useRepository();
+  const [selectedPRReviewers, setSelectedPRReviewers] = useState(null);
+  const [selectedPRWaiting, setSelectedPRWaiting] = useState(null);
   const [filters, setFilters] = useState({
     state: 'open',
     health_status: '',
@@ -85,7 +87,7 @@ export default function PRList() {
             </button>
           ))}
         </div>
-        <div className="flex flex-wrap gap-4 text-sm">
+        <div className="flex flex-wrap gap-4 text-sm justify-between w-full">
           <div className="flex items-center gap-2">
             <span className="text-slate-400">Health:</span>
             {['', 'on_track', 'needs_attention', 'at_risk', 'critical'].map(health => (
@@ -97,6 +99,12 @@ export default function PRList() {
                 {health ? getHealthLabel(health) : 'All'}
               </button>
             ))}
+          </div>
+          <div className="flex items-center gap-3 text-xs text-slate-400 bg-slate-900/50 px-3 py-1.5 rounded-lg border border-slate-700/50">
+            <span className="font-medium mr-1 text-slate-300">Reviewer Status:</span>
+            <div className="flex items-center gap-1"><div className="w-2.5 h-2.5 rounded-full border border-green-500 bg-green-500/20"></div> Approved</div>
+            <div className="flex items-center gap-1"><div className="w-2.5 h-2.5 rounded-full border border-yellow-500 bg-yellow-500/20"></div> Changes Req</div>
+            <div className="flex items-center gap-1"><div className="w-2.5 h-2.5 rounded-full border border-slate-500 bg-slate-500/20"></div> Pending / Commenting</div>
           </div>
         </div>
       </div>
@@ -143,19 +151,52 @@ export default function PRList() {
                       <span className="text-slate-500 text-xs">-</span>
                     )}
                   </td>
-                  <td className="px-5 py-4 text-slate-300 font-medium">{pr.business_hours_waiting != null ? formatDuration(pr.business_hours_waiting) : '-'}</td>
+                  <td className="px-5 py-4">
+                    <div 
+                      className="cursor-pointer hover:bg-slate-700/50 p-2 -m-2 rounded-lg transition-colors"
+                      onClick={() => pr.action_items?.length > 0 && setSelectedPRWaiting(pr)}
+                    >
+                      <div className="text-slate-300 font-medium">
+                        {pr.business_hours_waiting != null ? formatDuration(pr.business_hours_waiting) : '-'}
+                      </div>
+                      {pr.top_action_description && (
+                        <div className="text-slate-500 text-[11px] mt-1 max-w-[200px] truncate" title={pr.top_action_description}>
+                          ↳ {pr.top_action_description}
+                        </div>
+                      )}
+                    </div>
+                  </td>
                   <td className="px-5 py-4 text-slate-400">{pr.review_cycles_count || 0}</td>
                   <td className="px-5 py-4 text-slate-400">
                     {pr.state === 'closed' ? (pr.is_merged ? 'Merged' : 'Closed') : 'Open'}
                   </td>
-                  <td className="px-5 py-4 text-slate-400">
-                    <div className="flex gap-1 text-xs">
-                      {pr.total_reviewers_count > 0 ? (
-                        <>
-                          <span className="text-green-400" title="Approved">{pr.approved_reviewers_count || 0}</span>/
-                          <span className="text-slate-400" title="Total">{pr.total_reviewers_count || 0}</span>
-                        </>
-                      ) : '-'}
+                  <td className="px-5 py-4">
+                    <div 
+                      className="flex items-center -space-x-2 cursor-pointer hover:opacity-80 transition-opacity"
+                      onClick={() => pr.reviewers?.length > 0 && setSelectedPRReviewers(pr)}
+                    >
+                      {pr.reviewers && pr.reviewers.length > 0 ? (
+                        pr.reviewers.map(r => (
+                          <div 
+                            key={r.reviewer_login}
+                            title={`${r.reviewer_login} (${r.review_state || 'PENDING'})`}
+                            className={clsx(
+                              "w-7 h-7 rounded-full border border-slate-800 bg-slate-700 flex items-center justify-center overflow-hidden z-10 hover:z-20 transition-transform hover:scale-110",
+                              r.review_state === 'APPROVED' && !r.re_review_needed ? 'ring-2 ring-green-500' :
+                              r.review_state === 'CHANGES_REQUESTED' ? 'ring-2 ring-yellow-500' :
+                              'ring-1 ring-slate-600'
+                            )}
+                          >
+                            {r.reviewer_avatar_url ? (
+                              <img src={r.reviewer_avatar_url} alt={r.reviewer_login} className="w-full h-full object-cover" />
+                            ) : (
+                              <span className="text-[10px] text-slate-300">{r.reviewer_login.charAt(0).toUpperCase()}</span>
+                            )}
+                          </div>
+                        ))
+                      ) : (
+                        <span className="text-slate-500 text-xs pl-2">-</span>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -191,6 +232,142 @@ export default function PRList() {
           </div>
         )}
       </div>
+
+      {/* Reviewers Modal */}
+      {selectedPRReviewers && (
+        <div className="fixed inset-0 bg-slate-950/80 flex items-center justify-center z-50 p-4" onClick={() => setSelectedPRReviewers(null)}>
+          <div className="bg-slate-800 border border-slate-700 rounded-xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-800 rounded-t-xl sticky top-0">
+              <h2 className="text-lg font-bold text-slate-200">
+                Reviewers for PR #{selectedPRReviewers.number}
+              </h2>
+              <button onClick={() => setSelectedPRReviewers(null)} className="text-slate-400 hover:text-white p-1 rounded-md hover:bg-slate-700">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4 overflow-y-auto space-y-4">
+              {selectedPRReviewers.reviewers?.map((r, i) => (
+                <div key={r.reviewer_login} className="bg-slate-900/50 border border-slate-700/50 rounded-lg p-4 flex gap-4">
+                  <div className="flex-shrink-0 relative">
+                    {r.reviewer_avatar_url ? (
+                      <img src={r.reviewer_avatar_url} alt={r.reviewer_login} className="w-10 h-10 rounded-full" />
+                    ) : (
+                      <div className="w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center text-sm">
+                        {r.reviewer_login.charAt(0).toUpperCase()}
+                      </div>
+                    )}
+                    <div className={clsx(
+                      "absolute -bottom-1 -right-1 w-4 h-4 rounded-full border-2 border-slate-800",
+                      r.review_state === 'APPROVED' && !r.re_review_needed ? 'bg-green-500' :
+                      r.review_state === 'CHANGES_REQUESTED' ? 'bg-yellow-500' :
+                      'bg-slate-500'
+                    )}></div>
+                  </div>
+                  <div className="flex-grow min-w-0">
+                    <div className="flex justify-between items-start mb-1">
+                      <div className="font-semibold text-slate-200">
+                        {r.reviewer_login}
+                        <span className="text-slate-500 text-xs ml-2 font-normal">User {i + 1}</span>
+                      </div>
+                      <div className="text-xs text-slate-400">
+                        Assigned {timeAgo(r.assigned_at)}
+                      </div>
+                    </div>
+                    
+                    <div className="text-xs mb-2">
+                      <span className={clsx(
+                        "px-2 py-0.5 rounded-full",
+                        r.review_state === 'APPROVED' && !r.re_review_needed ? 'bg-green-500/10 text-green-400' :
+                        r.review_state === 'CHANGES_REQUESTED' ? 'bg-yellow-500/10 text-yellow-400' :
+                        'bg-slate-500/10 text-slate-400'
+                      )}>
+                        {r.review_state === 'APPROVED' && !r.re_review_needed ? 'Approved' :
+                         r.review_state === 'CHANGES_REQUESTED' ? 'Changes Requested' :
+                         'Pending Review'}
+                      </span>
+                      {r.response_time_biz_hours != null && (
+                        <span className="ml-2 text-slate-400">
+                          (Took {formatDuration(r.response_time_biz_hours)})
+                        </span>
+                      )}
+                    </div>
+                    
+                    {r.latest_comment ? (
+                      <div className="mt-2 bg-slate-800 p-3 rounded-md border border-slate-700 text-sm text-slate-300">
+                        <div className="text-xs text-slate-500 mb-1 font-medium">Latest Comment:</div>
+                        <div className="line-clamp-3 whitespace-pre-wrap">{r.latest_comment}</div>
+                      </div>
+                    ) : (
+                      <div className="mt-2 text-sm text-slate-500 italic">No review comments yet.</div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Waiting Details Modal */}
+      {selectedPRWaiting && (
+        <div className="fixed inset-0 bg-slate-950/80 flex items-center justify-center z-50 p-4" onClick={() => setSelectedPRWaiting(null)}>
+          <div className="bg-slate-800 border border-slate-700 rounded-xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-800 rounded-t-xl sticky top-0">
+              <h2 className="text-lg font-bold text-slate-200">
+                Current Blockers for PR #{selectedPRWaiting.number}
+              </h2>
+              <button onClick={() => setSelectedPRWaiting(null)} className="text-slate-400 hover:text-white p-1 rounded-md hover:bg-slate-700">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4 overflow-y-auto space-y-4">
+              {selectedPRWaiting.action_items?.map((item, i) => (
+                <div key={item.id || i} className={clsx(
+                  "border rounded-lg p-4 flex flex-col gap-2",
+                  item.priority === 'HIGH' ? 'bg-red-500/10 border-red-500/20' :
+                  item.priority === 'NORMAL' ? 'bg-orange-500/10 border-orange-500/20' :
+                  'bg-slate-900/50 border-slate-700/50'
+                )}>
+                  <div className="flex justify-between items-start">
+                    <div className="flex items-center gap-2">
+                      <span className={clsx(
+                        "px-2 py-0.5 rounded-md text-[11px] font-bold uppercase tracking-wider",
+                        item.priority === 'HIGH' ? 'bg-red-500/20 text-red-400' :
+                        item.priority === 'NORMAL' ? 'bg-orange-500/20 text-orange-400' :
+                        'bg-slate-700 text-slate-300'
+                      )}>
+                        {item.action_type.replace(/_/g, ' ')}
+                      </span>
+                      {item.assignee_login && (
+                        <span className="text-sm font-medium text-slate-200">
+                          Assigned to: {item.assignee_login}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-right">
+                      <div className="text-lg font-bold text-slate-200">
+                        {formatDuration(item.waiting_biz_hours || 0)}
+                      </div>
+                      <div className="text-[10px] text-slate-400">
+                        Waiting since {timeAgo(item.waiting_since)}
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="mt-2 text-sm text-slate-300 bg-slate-900/40 p-3 rounded-md border border-slate-800">
+                    {item.description}
+                  </div>
+                </div>
+              ))}
+              
+              {selectedPRWaiting.action_items?.length === 0 && (
+                <div className="text-center text-slate-400 py-8">
+                  This PR currently has no active blockers.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

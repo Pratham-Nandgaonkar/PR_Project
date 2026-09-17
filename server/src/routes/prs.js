@@ -59,6 +59,40 @@ router.get('/:repoId', async (req, res) => {
       .limit(parseInt(limit))
       .offset(offset);
 
+    const prIds = data.map(pr => pr.id);
+    if (prIds.length > 0) {
+      const actionItems = await db('pr_action_items')
+        .whereIn('pull_request_id', prIds)
+        .orderBy('waiting_biz_hours', 'desc');
+        
+      const prReviewers = await db('pr_reviewers')
+        .whereIn('pull_request_id', prIds)
+        .orderBy('assignment_order', 'asc');
+        
+      const allReviews = await db('reviews')
+        .whereIn('pull_request_id', prIds)
+        .whereNotNull('body')
+        .whereNot('body', '')
+        .orderBy('submitted_at', 'desc');
+      
+      data.forEach(pr => {
+        const prActions = actionItems.filter(a => a.pull_request_id === pr.id);
+        if (prActions.length > 0) {
+          pr.top_action_description = prActions[0].description;
+        }
+        pr.action_items = prActions;
+        
+        pr.reviewers = prReviewers.filter(r => r.pull_request_id === pr.id).map(r => {
+          const latestReview = allReviews.find(rev => rev.pull_request_id === pr.id && rev.reviewer_login === r.reviewer_login);
+          return {
+            ...r,
+            latest_comment: latestReview ? latestReview.body : null,
+            latest_comment_at: latestReview ? latestReview.submitted_at : null
+          };
+        });
+      });
+    }
+
     res.json({ data, total, page: parseInt(page), limit: parseInt(limit) });
   } catch (error) {
     console.error('Error fetching PRs:', error);
