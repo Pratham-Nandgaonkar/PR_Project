@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useRepository } from '../hooks/useRepository';
 import { useFetch } from '../hooks/useFetch';
 import { fetchSummary, fetchBottlenecks } from '../lib/api';
-import { formatDuration, getAgingBg, getResponsibilityLabel } from '../lib/utils';
+import { formatDuration, getHealthBg, getActionItemLabel } from '../lib/utils';
 import { GitPullRequest, AlertTriangle, Clock, Eye, UserX, Timer } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
 import clsx from 'clsx';
@@ -50,9 +50,9 @@ export default function Dashboard() {
   if (!summary) return null;
 
   const healthData = [
-    { name: 'Healthy', value: summary.healthy || 0, color: '#4ade80' },
-    { name: 'Attention', value: summary.attention || 0, color: '#facc15' },
-    { name: 'Aging', value: summary.aging || 0, color: '#fb923c' },
+    { name: 'On Track', value: summary.on_track || 0, color: '#4ade80' },
+    { name: 'Needs Attention', value: summary.needs_attention || 0, color: '#facc15' },
+    { name: 'At Risk', value: summary.at_risk || 0, color: '#fb923c' },
     { name: 'Critical', value: summary.critical || 0, color: '#f87171' },
   ].filter(d => d.value > 0);
 
@@ -69,7 +69,7 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         <MetricCard title="Total Open PRs" value={summary.totalOpen} icon={GitPullRequest} colorClass="text-blue-400" bgColorClass="bg-blue-500/10" />
         <MetricCard title="Critical PRs" value={summary.critical} icon={AlertTriangle} colorClass="text-red-400" bgColorClass="bg-red-500/10" />
-        <MetricCard title="Aging PRs" value={summary.aging} icon={Clock} colorClass="text-orange-400" bgColorClass="bg-orange-500/10" />
+        <MetricCard title="At Risk PRs" value={summary.at_risk} icon={Clock} colorClass="text-orange-400" bgColorClass="bg-orange-500/10" />
         <MetricCard title="Waiting for Review" value={summary.waitingForReviewer} icon={Eye} colorClass="text-blue-400" bgColorClass="bg-blue-500/10" />
         <MetricCard title="Waiting for Author" value={summary.waitingForAuthor} icon={UserX} colorClass="text-yellow-400" bgColorClass="bg-yellow-500/10" />
         <MetricCard title="Avg PR Age" value={formatDuration(summary.avgAgeHours)} icon={Timer} colorClass="text-emerald-400" bgColorClass="bg-emerald-500/10" />
@@ -112,7 +112,7 @@ export default function Dashboard() {
 
       <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
         <div className="p-5 border-b border-slate-700">
-          <h2 className="text-lg font-semibold">Current Bottlenecks (Top 10)</h2>
+          <h2 className="text-lg font-semibold">Current Bottlenecks (Top Action Items)</h2>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
@@ -120,29 +120,29 @@ export default function Dashboard() {
               <tr>
                 <th className="px-5 py-3 font-medium">PR</th>
                 <th className="px-5 py-3 font-medium">Title</th>
-                <th className="px-5 py-3 font-medium">Responsible</th>
-                <th className="px-5 py-3 font-medium">Status</th>
+                <th className="px-5 py-3 font-medium">Assignee</th>
+                <th className="px-5 py-3 font-medium">Action Type</th>
                 <th className="px-5 py-3 font-medium">Waiting</th>
-                <th className="px-5 py-3 font-medium">Reason</th>
+                <th className="px-5 py-3 font-medium">Description</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-700/50">
-              {bottlenecks?.map(pr => (
-                <tr key={pr.number} className="hover:bg-slate-700/30 transition-colors group">
+              {bottlenecks?.map((item, index) => (
+                <tr key={`${item.number}-${index}`} className="hover:bg-slate-700/30 transition-colors group">
                   <td className="px-5 py-4">
-                    <Link to={`/prs/${pr.number}`} className="text-blue-400 hover:underline">
-                      #{pr.number}
+                    <Link to={`/prs/${item.number}`} className="text-blue-400 hover:underline">
+                      #{item.number}
                     </Link>
                   </td>
-                  <td className="px-5 py-4 max-w-[200px] truncate text-slate-200" title={pr.title}>{pr.title}</td>
-                  <td className="px-5 py-4">{pr.responsible_login || '-'}</td>
+                  <td className="px-5 py-4 max-w-[200px] truncate text-slate-200" title={item.title}>{item.title}</td>
+                  <td className="px-5 py-4">{item.assignee_login || '-'}</td>
                   <td className="px-5 py-4">
-                    <span className={clsx("px-2.5 py-1 rounded-full text-xs border", getAgingBg(pr.aging_status))}>
-                      {getResponsibilityLabel(pr.responsibility_state)}
+                    <span className={clsx("px-2.5 py-1 rounded-full text-xs border whitespace-nowrap", getHealthBg(item.health_status))}>
+                      {getActionItemLabel(item.action_type)}
                     </span>
                   </td>
-                  <td className="px-5 py-4 whitespace-nowrap">{formatDuration(pr.waiting_hours)}</td>
-                  <td className="px-5 py-4 max-w-[200px] truncate text-slate-400" title={pr.responsibility_reason}>{pr.responsibility_reason}</td>
+                  <td className="px-5 py-4 whitespace-nowrap">{formatDuration(item.waiting_hours)}</td>
+                  <td className="px-5 py-4 max-w-[200px] truncate text-slate-400" title={item.description}>{item.description}</td>
                 </tr>
               ))}
               {(!bottlenecks || bottlenecks.length === 0) && (

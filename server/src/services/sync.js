@@ -2,8 +2,10 @@ const dayjs = require('dayjs');
 const db = require('../db');
 const config = require('../config');
 const github = require('./github');
-const { determineResponsibility, checkStaleness } = require('../engines/responsibility');
-const { classifyAging } = require('../engines/aging');
+const { classifyComment } = require('../engines/comments');
+const { determineActionItems } = require('../engines/actionItems');
+const { classifyHealth } = require('../engines/health');
+const { calculateBusinessHours, defaultConfig } = require('../engines/businessHours');
 const { detectReviewCycles } = require('../engines/reviewCycles');
 
 async function synchronizeRepository(repositoryId) {
@@ -12,7 +14,6 @@ async function synchronizeRepository(repositoryId) {
 
   github.resetApiCallCount();
 
-  // Create sync log
   const [syncLog] = await db('sync_logs').insert({
     repository_id: repositoryId,
     started_at: new Date(),
@@ -20,17 +21,18 @@ async function synchronizeRepository(repositoryId) {
   }).returning('*');
 
   try {
-    console.log(`[Sync] Starting sync for ${repo.full_name}...`);
+    console.log(`[Sync] Starting V2 sync for ${repo.full_name}...`);
 
-    // Fetch open PRs
-    const ghPRs = await github.fetchPullRequests(repo.owner, repo.name, 'open', config.github.prFetchLimit);
-    console.log(`[Sync] Fetched ${ghPRs.length} open PRs`);
+    const filters = repo.sync_filters || [];
+    const bizConfig = repo.business_hours_config || defaultConfig;
+
+    const ghPRs = await github.fetchPullRequests(repo.owner, repo.name, 'open', config.github.prFetchLimit, filters);
+    console.log(`[Sync] Fetched ${ghPRs.length} open PRs using filters`);
 
     let prsUpdated = 0;
 
     for (const ghPR of ghPRs) {
       try {
-        // Upsert PR
         const prData = {
           repository_id: repositoryId,
           github_pr_id: ghPR.id,
@@ -62,7 +64,6 @@ async function synchronizeRepository(repositoryId) {
           review_comments_count: ghPR.review_comments || 0,
         };
 
-        // Upsert
         let [prRecord] = await db('pull_requests')
           .where({ repository_id: repositoryId, number: ghPR.number })
           .update(prData)
@@ -72,8 +73,17 @@ async function synchronizeRepository(repositoryId) {
           [prRecord] = await db('pull_requests').insert(prData).returning('*');
         }
 
-        // Fetch reviews
+        // Fetch API details
         const ghReviews = await github.fetchReviews(repo.owner, repo.name, ghPR.number);
+        const ghEvents = await github.fetchPREvents(repo.owner, repo.name, ghPR.number);
+        const ghCommits = await github.fetchPRCommits(repo.owner, repo.name, ghPR.number);
+        const ghComments = await github.fetchPRComments(repo.owner, repo.name, ghPR.number);
+        
+        // Use the latest commit SHA to fetch checks, as head_ref fails for cross-fork PRs
+        const latestCommitSha = ghCommits.length > 0 ? ghCommits[ghCommits.length - 1].sha : null;
+        const ghChecks = latestCommitSha ? await github.fetchCheckRuns(repo.owner, repo.name, latestCommitSha) : [];
+
+        // Save Reviews
         await db('reviews').where({ pull_request_id: prRecord.id }).del();
         if (ghReviews.length > 0) {
           await db('reviews').insert(
@@ -88,8 +98,7 @@ async function synchronizeRepository(repositoryId) {
           );
         }
 
-        // Fetch events
-        const ghEvents = await github.fetchPREvents(repo.owner, repo.name, ghPR.number);
+        // Save Events
         await db('pr_events').where({ pull_request_id: prRecord.id }).del();
         const eventRows = ghEvents.map(e => ({
           pull_request_id: prRecord.id,
@@ -99,9 +108,6 @@ async function synchronizeRepository(repositoryId) {
           created_at: e.created_at,
           data: JSON.stringify(e),
         }));
-
-        // Fetch commits and add as events
-        const ghCommits = await github.fetchPRCommits(repo.owner, repo.name, ghPR.number);
         ghCommits.forEach(c => {
           eventRows.push({
             pull_request_id: prRecord.id,
@@ -112,51 +118,91 @@ async function synchronizeRepository(repositoryId) {
             data: JSON.stringify({ sha: c.sha, message: c.commit?.message }),
           });
         });
-
         if (eventRows.length > 0) {
           await db('pr_events').insert(eventRows);
         }
 
-        // Run analysis engines
-        const reviews = await db('reviews').where({ pull_request_id: prRecord.id }).orderBy('submitted_at', 'asc');
-        const events = await db('pr_events').where({ pull_request_id: prRecord.id }).orderBy('created_at', 'asc');
+        // Populate pr_reviewers
+        const requestedReviewers = (ghPR.requested_reviewers || []).map(r => r.login);
+        const actualReviewers = new Set([...requestedReviewers, ...ghReviews.map(r => r.user?.login).filter(Boolean)]);
+        
+        const commitTimes = ghCommits.map(c => new Date(c.commit?.author?.date || c.commit?.committer?.date));
+        const latestCommitTime = commitTimes.length > 0 ? new Date(Math.max(...commitTimes)) : new Date(0);
 
-        let responsibility = determineResponsibility(prRecord, reviews, events);
-        responsibility = checkStaleness(responsibility, prRecord, events);
-        const aging = classifyAging(prRecord, responsibility);
-        const cycles = detectReviewCycles(prRecord, reviews, events);
+        ghReviews.sort((a, b) => new Date(a.submitted_at) - new Date(b.submitted_at));
+        
+        await db('pr_reviewers').where({ pull_request_id: prRecord.id }).del();
+        const prReviewersRows = [];
+        let assignOrder = 1;
 
-        // Compute derived fields
-        const allDates = [
-          prRecord.updated_at,
-          ...reviews.map(r => r.submitted_at),
-          ...events.map(e => e.created_at),
-        ].filter(Boolean);
-        const lastActivityAt = allDates.length > 0
-          ? allDates.reduce((max, d) => new Date(d) > new Date(max) ? d : max)
-          : prRecord.updated_at;
+        for (const login of actualReviewers) {
+          const userReviews = ghReviews.filter(r => r.user?.login === login);
+          const firstReview = userReviews.length > 0 ? userReviews[0] : null;
+          const latestReview = userReviews.length > 0 ? userReviews[userReviews.length - 1] : null;
+          
+          let state = 'PENDING';
+          if (latestReview) state = latestReview.state;
 
-        const firstReview = reviews.find(r => r.state !== 'PENDING');
-        const firstApproval = reviews.find(r => r.state === 'APPROVED');
+          const latest_reviewed_at = latestReview ? new Date(latestReview.submitted_at) : null;
+          const re_review_needed = latest_reviewed_at && latestCommitTime > latest_reviewed_at;
 
-        // Update PR with computed fields
-        await db('pull_requests').where({ id: prRecord.id }).update({
-          aging_status: aging.status,
-          responsibility_state: responsibility.state,
-          responsible_login: responsibility.responsibleLogin,
-          responsibility_reason: responsibility.reason,
-          responsibility_started_at: responsibility.startedAt,
-          review_cycles_count: cycles.length,
-          avg_review_cycle_hours: cycles.length > 0
-            ? Math.round((cycles.reduce((s, c) => s + c.reviewerResponseHours, 0) / cycles.length) * 10) / 10
-            : null,
-          first_review_at: firstReview?.submitted_at || null,
-          first_approval_at: firstApproval?.submitted_at || null,
-          last_activity_at: lastActivityAt,
-          last_analyzed_at: new Date(),
-        });
+          prReviewersRows.push({
+            pull_request_id: prRecord.id,
+            reviewer_login: login,
+            review_state: state,
+            assignment_order: assignOrder++,
+            first_reviewed_at: firstReview ? new Date(firstReview.submitted_at) : null,
+            latest_reviewed_at: latest_reviewed_at,
+            re_review_needed,
+          });
+        }
+        if (prReviewersRows.length > 0) {
+          await db('pr_reviewers').insert(prReviewersRows);
+        }
 
-        // Update review cycles
+        // Populate pr_comment_threads
+        await db('pr_comment_threads').where({ pull_request_id: prRecord.id }).del();
+        const prCommentsRows = [];
+        for (const comment of ghComments) {
+          prCommentsRows.push({
+            pull_request_id: prRecord.id,
+            github_comment_id: comment.id,
+            author_login: comment.user?.login || 'unknown',
+            body: comment.body,
+            classification: classifyComment(comment.body),
+            is_resolved: false,
+            created_at: comment.created_at,
+          });
+        }
+        if (prCommentsRows.length > 0) {
+          await db('pr_comment_threads').insert(prCommentsRows);
+        }
+
+        // Populate pr_checks
+        await db('pr_checks').where({ pull_request_id: prRecord.id }).del();
+        const checkRows = (ghChecks.check_runs || ghChecks).map(c => ({
+          pull_request_id: prRecord.id,
+          check_name: c.name,
+          status: c.status,
+          conclusion: c.conclusion,
+          started_at: c.started_at,
+          completed_at: c.completed_at,
+        }));
+        if (checkRows.length > 0) {
+          await db('pr_checks').insert(checkRows);
+        }
+
+        // Call engines
+        prRecord.business_hours_age = calculateBusinessHours(prRecord.created_at, new Date(), bizConfig);
+        
+        const { actionItems, pendingOnSummary } = determineActionItems(
+          prRecord, prReviewersRows, prCommentsRows, checkRows, bizConfig
+        );
+
+        const reviewsDb = await db('reviews').where({ pull_request_id: prRecord.id }).orderBy('submitted_at', 'asc');
+        const eventsDb = await db('pr_events').where({ pull_request_id: prRecord.id }).orderBy('created_at', 'asc');
+        const cycles = detectReviewCycles(prRecord, reviewsDb, eventsDb);
+        
         await db('review_cycles').where({ pull_request_id: prRecord.id }).del();
         if (cycles.length > 0) {
           await db('review_cycles').insert(
@@ -176,42 +222,65 @@ async function synchronizeRepository(repositoryId) {
           );
         }
 
+        const healthStatus = classifyHealth(prRecord, actionItems, cycles.length, bizConfig);
+        const unresolvedCommentsCount = prCommentsRows.filter(c => !c.is_resolved).length;
+        const totalReviewersCount = actualReviewers.size;
+        const approvedReviewersCount = prReviewersRows.filter(r => r.review_state === 'APPROVED' && !r.re_review_needed).length;
+        const pendingReviewersCount = prReviewersRows.filter(r => r.review_state === 'PENDING' || r.re_review_needed).length;
+        const businessHoursWaiting = actionItems.length > 0 ? Math.max(...actionItems.map(a => a.waiting_biz_hours || 0)) : 0;
+
+        await db('pull_requests').where({ id: prRecord.id }).update({
+          health_status: healthStatus,
+          pending_on_summary: pendingOnSummary,
+          unresolved_comments_count: unresolvedCommentsCount,
+          total_reviewers_count: totalReviewersCount,
+          approved_reviewers_count: approvedReviewersCount,
+          pending_reviewers_count: pendingReviewersCount,
+          business_hours_waiting: businessHoursWaiting,
+          business_hours_age: prRecord.business_hours_age,
+          review_cycles_count: cycles.length,
+          last_analyzed_at: new Date(),
+        });
+
+        await db('pr_action_items').where({ pull_request_id: prRecord.id }).del();
+        if (actionItems.length > 0) {
+          await db('pr_action_items').insert(actionItems.map(a => ({
+            pull_request_id: prRecord.id,
+            ...a
+          })));
+        }
+
         prsUpdated++;
       } catch (prErr) {
         console.error(`[Sync] Error processing PR #${ghPR.number}:`, prErr.message);
       }
     }
 
-    // Create snapshot
     const allOpenPRs = await db('pull_requests').where({ repository_id: repositoryId, state: 'open' });
-    const now = dayjs();
     const snapshotData = {
       repository_id: repositoryId,
       snapshot_at: new Date(),
       total_open_prs: allOpenPRs.length,
-      healthy_count: allOpenPRs.filter(p => p.aging_status === 'healthy').length,
-      attention_count: allOpenPRs.filter(p => p.aging_status === 'attention').length,
-      aging_count: allOpenPRs.filter(p => p.aging_status === 'aging').length,
-      critical_count: allOpenPRs.filter(p => p.aging_status === 'critical').length,
-      waiting_for_author_count: allOpenPRs.filter(p => ['CHANGES_REQUESTED', 'DRAFT', 'NO_REVIEWER'].includes(p.responsibility_state)).length,
-      waiting_for_reviewer_count: allOpenPRs.filter(p => p.responsibility_state === 'WAITING_FOR_REVIEW').length,
+      healthy_count: allOpenPRs.filter(p => p.health_status === 'on_track').length,
+      attention_count: allOpenPRs.filter(p => p.health_status === 'needs_attention').length,
+      aging_count: allOpenPRs.filter(p => p.health_status === 'at_risk').length,
+      critical_count: allOpenPRs.filter(p => p.health_status === 'critical').length,
+      waiting_for_author_count: allOpenPRs.filter(p => p.pending_on_summary.includes('Author')).length,
+      waiting_for_reviewer_count: allOpenPRs.filter(p => !p.pending_on_summary.includes('Author')).length,
       avg_pr_age_hours: allOpenPRs.length > 0
-        ? Math.round(allOpenPRs.reduce((s, p) => s + now.diff(dayjs(p.created_at), 'hour', true), 0) / allOpenPRs.length * 10) / 10
+        ? Math.round(allOpenPRs.reduce((s, p) => s + (p.business_hours_age || 0), 0) / allOpenPRs.length * 10) / 10
         : 0,
     };
     await db('pr_snapshots').insert(snapshotData);
 
-    // Update repo
     await db('repositories').where({ id: repositoryId }).update({ last_synced_at: new Date() });
 
-    // Get rate limit
     let rateLimitRemaining = null;
     try {
       const rl = await github.getRateLimit();
       rateLimitRemaining = rl.remaining;
     } catch (e) { /* ignore */ }
 
-    // Update sync log
     await db('sync_logs').where({ id: syncLog.id }).update({
       completed_at: new Date(),
       status: 'completed',

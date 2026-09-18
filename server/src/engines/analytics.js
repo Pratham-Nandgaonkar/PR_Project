@@ -1,24 +1,26 @@
 const dayjs = require('dayjs');
 
 function computeSummary(prs) {
-  const now = dayjs();
   const openPRs = prs.filter(p => p.state === 'open');
   const closedPRs = prs.filter(p => p.state === 'closed' && !p.is_merged);
   const mergedPRs = prs.filter(p => p.is_merged);
 
-  const agingCounts = { healthy: 0, attention: 0, aging: 0, critical: 0 };
+  const healthCounts = { on_track: 0, needs_attention: 0, at_risk: 0, critical: 0 };
   openPRs.forEach(p => {
-    if (agingCounts[p.aging_status] !== undefined) agingCounts[p.aging_status]++;
+    if (healthCounts[p.health_status] !== undefined) healthCounts[p.health_status]++;
   });
 
   let waitingForAuthor = 0, waitingForReviewer = 0;
   openPRs.forEach(p => {
-    if (['CHANGES_REQUESTED', 'DRAFT', 'NO_REVIEWER'].includes(p.responsibility_state)) waitingForAuthor++;
-    if (['WAITING_FOR_REVIEW'].includes(p.responsibility_state)) waitingForReviewer++;
+    if (p.pending_on_summary && p.pending_on_summary.includes('Author')) {
+      waitingForAuthor++;
+    } else if (p.pending_on_summary) {
+      waitingForReviewer++;
+    }
   });
 
   const avgAgeHours = openPRs.length > 0
-    ? openPRs.reduce((sum, p) => sum + now.diff(dayjs(p.created_at), 'hour', true), 0) / openPRs.length
+    ? openPRs.reduce((sum, p) => sum + (p.business_hours_age || 0), 0) / openPRs.length
     : 0;
 
   const prsWithFirstReview = prs.filter(p => p.first_review_at);
@@ -35,7 +37,7 @@ function computeSummary(prs) {
     totalOpen: openPRs.length,
     totalClosed: closedPRs.length,
     totalMerged: mergedPRs.length,
-    ...agingCounts,
+    ...healthCounts,
     waitingForAuthor,
     waitingForReviewer,
     avgAgeHours: Math.round(avgAgeHours * 10) / 10,
@@ -89,7 +91,7 @@ function computePeopleAnalytics(prs, reviews) {
         };
       }
       reviewerMap[login].pendingReviews++;
-      const pendingHours = now.diff(dayjs(p.created_at), 'hour', true);
+      const pendingHours = p.business_hours_age || 0;
       if (pendingHours > reviewerMap[login].longestPendingHours) {
         reviewerMap[login].longestPendingHours = pendingHours;
       }
@@ -128,7 +130,7 @@ function computePeopleAnalytics(prs, reviews) {
     am.total_prs++;
     if (p.state === 'open') {
       am.open_prs++;
-      am.ages.push(now.diff(dayjs(p.created_at), 'hour', true));
+      am.ages.push(p.business_hours_age || 0);
     }
     if (p.review_cycles_count) am.reviewCycles.push(p.review_cycles_count);
   });
@@ -153,23 +155,24 @@ function computePeopleAnalytics(prs, reviews) {
   return { reviewers, authors };
 }
 
-function computeBottlenecks(prs) {
-  const now = dayjs();
-  return prs
-    .filter(p => p.state === 'open' && p.responsibility_state && !['MERGED', 'CLOSED', 'DRAFT'].includes(p.responsibility_state))
-    .map(p => ({
-      number: p.number,
-      title: p.title,
-      url: p.url,
-      responsible_login: p.responsible_login,
-      responsibility_state: p.responsibility_state,
-      waiting_hours: p.responsibility_started_at
-        ? Math.round(now.diff(dayjs(p.responsibility_started_at), 'hour', true) * 10) / 10
-        : 0,
-      aging_status: p.aging_status,
-      responsibility_reason: p.responsibility_reason,
-    }))
-    .sort((a, b) => b.waiting_hours - a.waiting_hours);
+function computeBottlenecks(prs, actionItems = []) {
+  const bottlenecks = [];
+  for (const item of actionItems) {
+    const pr = prs.find(p => p.id === item.pull_request_id);
+    if (pr) {
+      bottlenecks.push({
+        number: pr.number,
+        title: pr.title,
+        url: pr.url,
+        assignee_login: item.assignee_login,
+        action_type: item.action_type,
+        waiting_hours: Math.round((item.waiting_biz_hours || 0) * 10) / 10,
+        health_status: pr.health_status,
+        description: item.description,
+      });
+    }
+  }
+  return bottlenecks.sort((a, b) => b.waiting_hours - a.waiting_hours);
 }
 
 module.exports = { computeSummary, computePeopleAnalytics, computeBottlenecks };

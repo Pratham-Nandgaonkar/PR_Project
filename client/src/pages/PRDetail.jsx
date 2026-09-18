@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom';
 import { useRepository } from '../hooks/useRepository';
 import { useFetch } from '../hooks/useFetch';
 import { fetchPRDetail } from '../lib/api';
-import { formatDuration, hoursSince, formatDate, getAgingBg, getResponsibilityColor, getResponsibilityLabel, timeAgo } from '../lib/utils';
+import { formatDuration, hoursSince, formatDate, getHealthBg, getHealthLabel, getActionItemIcon, getActionItemLabel, getActionItemColor, timeAgo } from '../lib/utils';
 import { ExternalLink, GitPullRequest, GitMerge, XCircle, MessageSquare, Check, RotateCcw, User } from 'lucide-react';
 import clsx from 'clsx';
 
@@ -19,7 +19,14 @@ export default function PRDetail() {
   if (loading) return <div className="p-8 text-center text-slate-400">Loading PR details...</div>;
   if (error || !data) return <div className="p-8 text-center text-red-400">Error loading PR: {error}</div>;
 
-  const { pr, events, reviewCycles } = data;
+  const { pr, events, reviewCycles, timeline } = data;
+  const actionItems = data.actionItems || [];
+  const reviewers = data.reviewers || [];
+  const checks = data.checks || [];
+  const commentThreads = data.commentThreads || [];
+  
+  // Use timeline if events isn't fully structured as we need
+  const displayEvents = timeline || events || [];
 
   const EventIcon = ({ type }) => {
     switch (type) {
@@ -59,36 +66,48 @@ export default function PRDetail() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-slate-800 p-4 rounded-xl border border-slate-700">
           <div className="text-slate-400 text-sm mb-1">Age</div>
-          <div className="text-xl font-semibold">{formatDuration(hoursSince(pr.created_at))}</div>
+          <div className="text-xl font-semibold">{pr.business_hours_age != null ? formatDuration(pr.business_hours_age) : formatDuration(hoursSince(pr.created_at))}</div>
         </div>
         <div className="bg-slate-800 p-4 rounded-xl border border-slate-700">
           <div className="text-slate-400 text-sm mb-1">Status</div>
           <div className="mt-1">
-            <span className={clsx("px-2.5 py-1 rounded-full text-xs font-medium border", getResponsibilityColor(pr.responsibility_state))}>
-              {getResponsibilityLabel(pr.responsibility_state)}
+            <span className={clsx("px-2.5 py-1 rounded-full text-xs font-medium border", getHealthBg(pr.health_status))}>
+              {getHealthLabel(pr.health_status)}
             </span>
           </div>
         </div>
-        <div className="bg-slate-800 p-4 rounded-xl border border-slate-700">
-          <div className="text-slate-400 text-sm mb-1">Responsible</div>
-          <div className="text-lg font-medium">{pr.responsible_login || 'None'}</div>
+        <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 overflow-hidden">
+          <div className="text-slate-400 text-sm mb-1">Pending On</div>
+          <div className="text-sm font-medium mt-1 truncate" title={pr.pending_on_summary}>{pr.pending_on_summary || 'None'}</div>
         </div>
         <div className="bg-slate-800 p-4 rounded-xl border border-slate-700">
           <div className="text-slate-400 text-sm mb-1">Waiting</div>
-          <div className="text-xl font-semibold">{formatDuration(hoursSince(pr.responsibility_started_at))}</div>
+          <div className="text-xl font-semibold">{pr.business_hours_waiting != null ? formatDuration(pr.business_hours_waiting) : '-'}</div>
         </div>
       </div>
 
-      <div className={clsx("bg-slate-800 rounded-xl p-5 border-l-4 shadow-lg", 
-        pr.aging_status === 'critical' ? 'border-l-red-500' :
-        pr.aging_status === 'aging' ? 'border-l-orange-500' :
-        pr.aging_status === 'attention' ? 'border-l-yellow-500' : 'border-l-green-500'
-      )}>
-        <h2 className="text-lg font-semibold mb-2 flex items-center gap-2">
-          Current Status <span className={clsx("text-xs px-2 py-0.5 rounded-full", getAgingBg(pr.aging_status))}>{pr.aging_status.toUpperCase()}</span>
-        </h2>
-        <p className="text-slate-300 text-lg leading-relaxed">{pr.responsibility_reason}</p>
-      </div>
+      {actionItems && actionItems.length > 0 && (
+        <div className="bg-slate-800 rounded-xl border border-slate-700 p-5">
+          <h2 className="text-lg font-semibold mb-4">Action Items</h2>
+          <div className="space-y-3">
+            {actionItems.map((item, i) => {
+              const Icon = getActionItemIcon(item.action_type);
+              return (
+                <div key={i} className={clsx("flex items-center gap-3 p-3 rounded-lg border", getActionItemColor(item.action_type))}>
+                  <Icon className="w-5 h-5" />
+                  <div>
+                    <div className="font-semibold">{getActionItemLabel(item.action_type)}</div>
+                    <div className="text-sm opacity-80">{item.description}</div>
+                  </div>
+                  <div className="ml-auto text-xs opacity-70">
+                    Waiting since {formatDate(item.waiting_since)}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <div className="bg-slate-800 rounded-xl border border-slate-700 p-5">
         <h2 className="text-lg font-semibold mb-4 border-b border-slate-700 pb-2">PR Information</h2>
@@ -107,6 +126,68 @@ export default function PRDetail() {
           </div>
         </div>
       </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {reviewers && reviewers.length > 0 && (
+          <div className="bg-slate-800 rounded-xl border border-slate-700 p-5">
+            <h2 className="text-lg font-semibold mb-4">Reviewers</h2>
+            <div className="grid grid-cols-1 gap-3">
+              {reviewers.map((r, i) => (
+                <div key={i} className="flex items-center gap-3 p-3 rounded-lg bg-slate-900/50 border border-slate-700">
+                  <div className="flex flex-col">
+                    <span className="font-semibold text-slate-200">{r.reviewer_login}</span>
+                    <span className={clsx("text-xs px-2 py-0.5 rounded-full w-max mt-1 border", 
+                      r.review_state === 'APPROVED' ? 'bg-green-500/10 text-green-400 border-green-500/20' :
+                      r.review_state === 'CHANGES_REQUESTED' ? 'bg-orange-500/10 text-orange-400 border-orange-500/20' :
+                      'bg-slate-500/10 text-slate-400 border-slate-500/20'
+                    )}>
+                      {r.review_state}
+                      {r.re_review_needed && ' (Re-review needed)'}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {checks && checks.length > 0 && (
+          <div className="bg-slate-800 rounded-xl border border-slate-700 p-5">
+            <h2 className="text-lg font-semibold mb-4">CI Checks</h2>
+            <div className="space-y-2 max-h-64 overflow-y-auto pr-2">
+              {checks.map((c, i) => (
+                <div key={i} className="flex justify-between items-center p-2 rounded bg-slate-900/50">
+                  <span className="text-slate-300 truncate mr-2" title={c.check_name}>{c.check_name}</span>
+                  <span className={clsx("text-xs px-2 py-0.5 rounded-full border whitespace-nowrap",
+                    c.conclusion === 'success' ? 'bg-green-500/10 text-green-400 border-green-500/20' :
+                    c.conclusion === 'failure' || c.conclusion === 'timed_out' ? 'bg-red-500/10 text-red-400 border-red-500/20' :
+                    'bg-yellow-500/10 text-yellow-400 border-yellow-500/20'
+                  )}>
+                    {c.conclusion || c.status}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {commentThreads && commentThreads.some(c => !c.is_resolved) && (
+        <div className="bg-slate-800 rounded-xl border border-slate-700 p-5">
+          <h2 className="text-lg font-semibold mb-4">Unresolved Comments</h2>
+          <div className="space-y-3">
+            {commentThreads.filter(c => !c.is_resolved).map((c, i) => (
+              <div key={i} className="p-3 rounded-lg bg-slate-900/50 border border-slate-700">
+                <div className="flex justify-between text-sm mb-1">
+                  <span className="font-semibold text-slate-200">{c.author_login}</span>
+                  <span className="text-slate-500">{formatDate(c.created_at)}</span>
+                </div>
+                <div className="text-slate-300 text-sm whitespace-pre-wrap">{c.body}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {reviewCycles && reviewCycles.length > 0 && (
         <div className="bg-slate-800 rounded-xl border border-slate-700 p-5 overflow-x-auto">
@@ -145,19 +226,19 @@ export default function PRDetail() {
       <div className="bg-slate-800 rounded-xl border border-slate-700 p-5">
         <h2 className="text-lg font-semibold mb-6">Timeline</h2>
         <div className="relative pl-6 border-l-2 border-slate-700 space-y-6 ml-3">
-          {events?.map((event, i) => (
+          {displayEvents?.map((event, i) => (
             <div key={i} className="relative">
               <div className="absolute -left-[35px] bg-slate-800 rounded-full p-1 border border-slate-700">
-                <EventIcon type={event.event_type} />
+                <EventIcon type={event.type || event.event_type} />
               </div>
               <div className="flex flex-col sm:flex-row sm:items-baseline gap-2">
-                <span className="font-semibold text-slate-200">{event.actor_login}</span>
+                <span className="font-semibold text-slate-200">{event.actor || event.actor_login}</span>
                 <span className="text-slate-400">{event.description}</span>
-                <span className="text-xs text-slate-500 sm:ml-auto">{formatDate(event.event_time)} ({timeAgo(event.event_time)})</span>
+                <span className="text-xs text-slate-500 sm:ml-auto">{formatDate(event.timestamp || event.event_time)} ({timeAgo(event.timestamp || event.event_time)})</span>
               </div>
-              {event.body_snippet && (
-                <div className="mt-2 text-sm text-slate-400 bg-slate-900/50 p-3 rounded-lg border border-slate-700/50 italic">
-                  "{event.body_snippet}"
+              {(event.data?.body || event.body_snippet) && (
+                <div className="mt-2 text-sm text-slate-400 bg-slate-900/50 p-3 rounded-lg border border-slate-700/50 italic whitespace-pre-wrap">
+                  "{event.data?.body || event.body_snippet}"
                 </div>
               )}
             </div>

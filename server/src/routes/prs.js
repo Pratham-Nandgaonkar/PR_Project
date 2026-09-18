@@ -9,10 +9,8 @@ router.get('/:repoId', async (req, res) => {
     const { repoId } = req.params;
     const {
       state = 'open',
-      aging,
-      responsibility,
+      health_status,
       author,
-      reviewer,
       search,
       sort = 'created_at',
       order = 'desc',
@@ -23,11 +21,15 @@ router.get('/:repoId', async (req, res) => {
     let query = db('pull_requests').where({ repository_id: repoId });
 
     // Filters
-    if (state && state !== 'all') query = query.where({ state });
-    if (aging) query = query.where({ aging_status: aging });
-    if (responsibility) query = query.where({ responsibility_state: responsibility });
+    if (state && state !== 'all') {
+      if (state === 'merged') {
+        query = query.where({ is_merged: true });
+      } else {
+        query = query.where({ state });
+      }
+    }
+    if (health_status) query = query.where({ health_status });
     if (author) query = query.where({ author_login: author });
-    if (reviewer) query = query.where({ responsible_login: reviewer });
     if (search) {
       query = query.where(function () {
         this.where('title', 'ilike', `%${search}%`)
@@ -44,7 +46,6 @@ router.get('/:repoId', async (req, res) => {
     const sortMap = {
       created_at: 'created_at',
       age: 'created_at',
-      waiting: 'responsibility_started_at',
       activity: 'last_activity_at',
       updated: 'updated_at',
     };
@@ -57,6 +58,40 @@ router.get('/:repoId', async (req, res) => {
       .orderBy(sortCol, sortOrder)
       .limit(parseInt(limit))
       .offset(offset);
+
+    const prIds = data.map(pr => pr.id);
+    if (prIds.length > 0) {
+      const actionItems = await db('pr_action_items')
+        .whereIn('pull_request_id', prIds)
+        .orderBy('waiting_biz_hours', 'desc');
+        
+      const prReviewers = await db('pr_reviewers')
+        .whereIn('pull_request_id', prIds)
+        .orderBy('assignment_order', 'asc');
+        
+      const allReviews = await db('reviews')
+        .whereIn('pull_request_id', prIds)
+        .whereNotNull('body')
+        .whereNot('body', '')
+        .orderBy('submitted_at', 'desc');
+      
+      data.forEach(pr => {
+        const prActions = actionItems.filter(a => a.pull_request_id === pr.id);
+        if (prActions.length > 0) {
+          pr.top_action_description = prActions[0].description;
+        }
+        pr.action_items = prActions;
+        
+        pr.reviewers = prReviewers.filter(r => r.pull_request_id === pr.id).map(r => {
+          const latestReview = allReviews.find(rev => rev.pull_request_id === pr.id && rev.reviewer_login === r.reviewer_login);
+          return {
+            ...r,
+            latest_comment: latestReview ? latestReview.body : null,
+            latest_comment_at: latestReview ? latestReview.submitted_at : null
+          };
+        });
+      });
+    }
 
     res.json({ data, total, page: parseInt(page), limit: parseInt(limit) });
   } catch (error) {
@@ -88,6 +123,21 @@ router.get('/:repoId/:number', async (req, res) => {
     const reviewCycles = await db('review_cycles')
       .where({ pull_request_id: pr.id })
       .orderBy('cycle_number', 'asc');
+
+    const actionItems = await db('pr_action_items')
+      .where({ pull_request_id: pr.id })
+      .orderBy('waiting_biz_hours', 'desc');
+
+    const reviewers = await db('pr_reviewers')
+      .where({ pull_request_id: pr.id })
+      .orderBy('assignment_order', 'asc');
+
+    const commentThreads = await db('pr_comment_threads')
+      .where({ pull_request_id: pr.id })
+      .orderBy('created_at', 'asc');
+
+    const checks = await db('pr_checks')
+      .where({ pull_request_id: pr.id });
 
     // Build timeline
     const timeline = [];
@@ -170,7 +220,17 @@ router.get('/:repoId/:number', async (req, res) => {
       });
     }
 
-    res.json({ pr, reviews, events, reviewCycles, timeline });
+    res.json({
+      pr,
+      reviews,
+      events,
+      reviewCycles,
+      timeline,
+      actionItems,
+      reviewers,
+      commentThreads,
+      checks
+    });
   } catch (error) {
     console.error('Error fetching PR detail:', error);
     res.status(500).json({ error: 'Failed to fetch PR detail' });
