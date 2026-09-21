@@ -11,7 +11,9 @@ const app = express();
 // Middleware
 app.use(helmet());
 app.use(cors());
-app.use(morgan('dev'));
+app.use(morgan('dev', {
+  skip: (req) => req.url.includes('/status')
+}));
 app.use(express.json());
 
 // Routes

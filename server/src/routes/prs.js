@@ -24,6 +24,8 @@ router.get('/:repoId', async (req, res) => {
     if (state && state !== 'all') {
       if (state === 'merged') {
         query = query.where({ is_merged: true });
+      } else if (state === 'closed') {
+        query = query.where({ state: 'closed', is_merged: false });
       } else {
         query = query.where({ state });
       }
@@ -46,8 +48,11 @@ router.get('/:repoId', async (req, res) => {
     const sortMap = {
       created_at: 'created_at',
       age: 'created_at',
+      waiting_hours: 'business_hours_waiting',
+      last_activity_at: 'last_activity_at',
       activity: 'last_activity_at',
       updated: 'updated_at',
+      updated_at: 'updated_at',
     };
     const sortCol = sortMap[sort] || 'created_at';
     const sortOrder = order === 'asc' ? 'asc' : 'desc';

@@ -39,7 +39,11 @@ export default function PRList() {
   }
 
   const handleFilterChange = (key, value) => {
-    setFilters(prev => ({ ...prev, [key]: value, page: 1 }));
+    setFilters(prev => ({
+      ...prev,
+      [key]: value,
+      ...(key !== 'page' ? { page: 1 } : {}),
+    }));
   };
 
   const totalPages = data ? Math.ceil(data.total / filters.limit) : 1;
@@ -77,7 +81,7 @@ export default function PRList() {
 
       <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 space-y-4">
         <div className="flex gap-2">
-          {['all', 'open', 'closed'].map(state => (
+          {['all', 'open', 'merged', 'closed'].map(state => (
             <button
               key={state}
               onClick={() => handleFilterChange('state', state)}
@@ -167,8 +171,17 @@ export default function PRList() {
                     </div>
                   </td>
                   <td className="px-5 py-4 text-slate-400">{pr.review_cycles_count || 0}</td>
-                  <td className="px-5 py-4 text-slate-400">
-                    {pr.state === 'closed' ? (pr.is_merged ? 'Merged' : 'Closed') : 'Open'}
+                  <td className="px-5 py-4">
+                    <span className={clsx(
+                      "px-2.5 py-1 rounded-full text-xs font-medium border whitespace-nowrap",
+                      pr.state === 'closed'
+                        ? pr.is_merged
+                          ? 'bg-purple-500/10 text-purple-400 border-purple-500/20'
+                          : 'bg-slate-500/10 text-slate-400 border-slate-500/20'
+                        : 'bg-green-500/10 text-green-400 border-green-500/20'
+                    )}>
+                      {pr.state === 'closed' ? (pr.is_merged ? 'Merged' : 'Closed') : 'Open'}
+                    </span>
                   </td>
                   <td className="px-5 py-4">
                     <div 

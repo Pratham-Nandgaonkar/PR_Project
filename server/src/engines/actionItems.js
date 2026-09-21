@@ -1,6 +1,13 @@
 const { calculateBusinessHours } = require('./businessHours');
 
 function determineActionItems(pr, reviewers, commentThreads, checks, businessHoursConfig) {
+  if (pr.state === 'closed') {
+    return {
+      actionItems: [],
+      pendingOnSummary: pr.is_merged ? 'Merged' : 'Closed',
+    };
+  }
+
   const actionItems = [];
   let pendingSummaryParts = [];
 

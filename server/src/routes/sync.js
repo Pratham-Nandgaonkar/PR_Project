@@ -41,10 +41,19 @@ router.get('/:repoId/status', async (req, res) => {
       .first();
 
     const repo = await db('repositories').where({ id: repoId }).first();
+    const lastSyncedAt = repo?.last_synced_at || status.lastSync || null;
+    const nextSyncAt = status.nextSync || null;
+    const isSyncing = !!status.isRunning;
 
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
     res.json({
       ...status,
-      lastSync: repo?.last_synced_at || status.lastSync,
+      lastSync: lastSyncedAt,
+      nextSync: nextSyncAt,
+      last_synced_at: lastSyncedAt,
+      next_sync_at: nextSyncAt,
+      is_syncing: isSyncing,
+      isRunning: isSyncing,
       latestLog: latestLog || null,
     });
   } catch (error) {

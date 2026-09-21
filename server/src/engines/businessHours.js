@@ -12,8 +12,26 @@ const defaultConfig = {
   workEnd: 18
 };
 
-function calculateBusinessHours(start, end, config = defaultConfig) {
+function normalizeConfig(config) {
+  let parsed = config;
+  while (typeof parsed === 'string') {
+    try {
+      parsed = JSON.parse(parsed);
+    } catch (e) {
+      break;
+    }
+  }
+  return {
+    timezone: parsed?.timezone || defaultConfig.timezone,
+    workDays: Array.isArray(parsed?.workDays) ? parsed.workDays.map(Number) : defaultConfig.workDays,
+    workStart: parsed?.workStart !== undefined ? Number(parsed.workStart) : defaultConfig.workStart,
+    workEnd: parsed?.workEnd !== undefined ? Number(parsed.workEnd) : defaultConfig.workEnd,
+  };
+}
+
+function calculateBusinessHours(start, end, rawConfig = defaultConfig) {
   if (!start) return 0;
+  const config = normalizeConfig(rawConfig);
   let current = dayjs(start).tz(config.timezone);
   const target = end ? dayjs(end).tz(config.timezone) : dayjs().tz(config.timezone);
 
@@ -40,4 +58,4 @@ function calculateBusinessHours(start, end, config = defaultConfig) {
   return bizHours;
 }
 
-module.exports = { calculateBusinessHours, defaultConfig };
+module.exports = { calculateBusinessHours, normalizeConfig, defaultConfig };

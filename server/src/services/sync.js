@@ -5,12 +5,14 @@ const github = require('./github');
 const { classifyComment } = require('../engines/comments');
 const { determineActionItems } = require('../engines/actionItems');
 const { classifyHealth } = require('../engines/health');
-const { calculateBusinessHours, defaultConfig } = require('../engines/businessHours');
+const { calculateBusinessHours, normalizeConfig, defaultConfig } = require('../engines/businessHours');
 const { detectReviewCycles } = require('../engines/reviewCycles');
 
 async function synchronizeRepository(repositoryId) {
   const repo = await db('repositories').where({ id: repositoryId }).first();
-  if (!repo) throw new Error(`Repository ${repositoryId} not found`);
+  if (!repo) {
+    throw new Error(`Repository ${repositoryId} not found`);
+  }
 
   github.resetApiCallCount();
 
@@ -23,11 +25,14 @@ async function synchronizeRepository(repositoryId) {
   try {
     console.log(`[Sync] Starting V2 sync for ${repo.full_name}...`);
 
-    const filters = repo.sync_filters || [];
-    const bizConfig = repo.business_hours_config || defaultConfig;
+    let filters = repo.sync_filters || [];
+    if (typeof filters === 'string') {
+      try { filters = JSON.parse(filters); } catch (e) { filters = []; }
+    }
+    const bizConfig = normalizeConfig(repo.business_hours_config);
 
-    const ghPRs = await github.fetchPullRequests(repo.owner, repo.name, 'open', config.github.prFetchLimit, filters);
-    console.log(`[Sync] Fetched ${ghPRs.length} open PRs using filters`);
+    const ghPRs = await github.fetchPullRequests(repo.owner, repo.name, 'all', config.github.prFetchLimit, filters);
+    console.log(`[Sync] Fetched ${ghPRs.length} PRs (open/closed) using filters`);
 
     let prsUpdated = 0;
 
@@ -63,6 +68,23 @@ async function synchronizeRepository(repositoryId) {
           comments_count: ghPR.comments || 0,
           review_comments_count: ghPR.review_comments || 0,
         };
+
+        // Fetch full PR detail for file/commit stats (not included in list endpoint)
+        let ghDetail = null;
+        try {
+          ghDetail = await github.fetchPRDetail(repo.owner, repo.name, ghPR.number);
+        } catch (e) {
+          console.warn(`[Sync] Could not fetch detail for PR #${ghPR.number}:`, e.message);
+        }
+        if (ghDetail) {
+          prData.commits_count = ghDetail.commits || 0;
+          prData.changed_files_count = ghDetail.changed_files || 0;
+          prData.additions = ghDetail.additions || 0;
+          prData.deletions = ghDetail.deletions || 0;
+          prData.head_ref = ghDetail.head?.ref || prData.head_ref;
+          prData.base_ref = ghDetail.base?.ref || prData.base_ref;
+          prData.merged_by = ghDetail.merged_by?.login || prData.merged_by;
+        }
 
         let [prRecord] = await db('pull_requests')
           .where({ repository_id: repositoryId, number: ghPR.number })
@@ -193,7 +215,8 @@ async function synchronizeRepository(repositoryId) {
         }
 
         // Call engines
-        prRecord.business_hours_age = calculateBusinessHours(prRecord.created_at, new Date(), bizConfig);
+        const ageEnd = prRecord.state === 'closed' ? (prRecord.closed_at || prRecord.merged_at || new Date()) : new Date();
+        prRecord.business_hours_age = calculateBusinessHours(prRecord.created_at, ageEnd, bizConfig);
         
         const { actionItems, pendingOnSummary } = determineActionItems(
           prRecord, prReviewersRows, prCommentsRows, checkRows, bizConfig
@@ -229,6 +252,20 @@ async function synchronizeRepository(repositoryId) {
         const pendingReviewersCount = prReviewersRows.filter(r => r.review_state === 'PENDING' || r.re_review_needed).length;
         const businessHoursWaiting = actionItems.length > 0 ? Math.max(...actionItems.map(a => a.waiting_biz_hours || 0)) : 0;
 
+        // Compute last_activity_at = most recent of: updated_at, latest review, latest event, latest commit
+        const activityTimestamps = [
+          prRecord.updated_at ? new Date(prRecord.updated_at) : null,
+          ...ghReviews.map(r => r.submitted_at ? new Date(r.submitted_at) : null),
+          ...ghEvents.map(e => e.created_at ? new Date(e.created_at) : null),
+          ...ghCommits.map(c => {
+            const d = c.commit?.author?.date || c.commit?.committer?.date;
+            return d ? new Date(d) : null;
+          }),
+        ].filter(Boolean);
+        const lastActivityAt = activityTimestamps.length > 0
+          ? new Date(Math.max(...activityTimestamps.map(d => d.getTime())))
+          : prRecord.updated_at;
+
         await db('pull_requests').where({ id: prRecord.id }).update({
           health_status: healthStatus,
           pending_on_summary: pendingOnSummary,
@@ -239,6 +276,7 @@ async function synchronizeRepository(repositoryId) {
           business_hours_waiting: businessHoursWaiting,
           business_hours_age: prRecord.business_hours_age,
           review_cycles_count: cycles.length,
+          last_activity_at: lastActivityAt,
           last_analyzed_at: new Date(),
         });
 
@@ -251,12 +289,45 @@ async function synchronizeRepository(repositoryId) {
         }
 
         prsUpdated++;
+        if (prsUpdated % 10 === 0 || prsUpdated === ghPRs.length) {
+          console.log(`[Sync] Progress: ${prsUpdated}/${ghPRs.length} PRs analyzed...`);
+        }
       } catch (prErr) {
         console.error(`[Sync] Error processing PR #${ghPR.number}:`, prErr.message);
       }
     }
 
     const allOpenPRs = await db('pull_requests').where({ repository_id: repositoryId, state: 'open' });
+
+    // Compute avg first review time from pr_reviewers for all PRs in this repo that have been reviewed
+    const firstReviews = await db('pr_reviewers')
+      .join('pull_requests', 'pr_reviewers.pull_request_id', 'pull_requests.id')
+      .where('pull_requests.repository_id', repositoryId)
+      .whereNotNull('pr_reviewers.first_reviewed_at')
+      .select('pull_requests.created_at', 'pr_reviewers.first_reviewed_at', 'pr_reviewers.pull_request_id')
+      .orderBy('pr_reviewers.first_reviewed_at', 'asc');
+
+    // For each PR, take only the earliest first_reviewed_at across all reviewers
+    const firstReviewByPR = {};
+    firstReviews.forEach(r => {
+      const prId = r.pull_request_id;
+      if (!firstReviewByPR[prId]) {
+        firstReviewByPR[prId] = { created_at: r.created_at, first_reviewed_at: r.first_reviewed_at };
+      }
+    });
+
+    const firstReviewTimes = Object.values(firstReviewByPR)
+      .map(r => {
+        const created = new Date(r.created_at).getTime();
+        const reviewed = new Date(r.first_reviewed_at).getTime();
+        return (reviewed - created) / (1000 * 60 * 60); // hours
+      })
+      .filter(h => h >= 0 && h < 8760); // sanity check: 0–365 days
+
+    const avgFirstReviewHours = firstReviewTimes.length > 0
+      ? Math.round(firstReviewTimes.reduce((a, b) => a + b, 0) / firstReviewTimes.length * 10) / 10
+      : null;
+
     const snapshotData = {
       repository_id: repositoryId,
       snapshot_at: new Date(),
@@ -265,11 +336,12 @@ async function synchronizeRepository(repositoryId) {
       attention_count: allOpenPRs.filter(p => p.health_status === 'needs_attention').length,
       aging_count: allOpenPRs.filter(p => p.health_status === 'at_risk').length,
       critical_count: allOpenPRs.filter(p => p.health_status === 'critical').length,
-      waiting_for_author_count: allOpenPRs.filter(p => p.pending_on_summary.includes('Author')).length,
-      waiting_for_reviewer_count: allOpenPRs.filter(p => !p.pending_on_summary.includes('Author')).length,
+      waiting_for_author_count: allOpenPRs.filter(p => p.pending_on_summary && p.pending_on_summary.includes('Author')).length,
+      waiting_for_reviewer_count: allOpenPRs.filter(p => !p.pending_on_summary || !p.pending_on_summary.includes('Author')).length,
       avg_pr_age_hours: allOpenPRs.length > 0
         ? Math.round(allOpenPRs.reduce((s, p) => s + (p.business_hours_age || 0), 0) / allOpenPRs.length * 10) / 10
         : 0,
+      avg_first_review_hours: avgFirstReviewHours,
     };
     await db('pr_snapshots').insert(snapshotData);
 
@@ -305,4 +377,138 @@ async function synchronizeRepository(repositoryId) {
   }
 }
 
-module.exports = { synchronizeRepository };
+async function recalculateRepository(repositoryId) {
+  const repo = await db('repositories').where({ id: repositoryId }).first();
+  if (!repo) return;
+
+  const bizConfig = normalizeConfig(repo.business_hours_config);
+  const prs = await db('pull_requests').where({ repository_id: repositoryId });
+  if (prs.length === 0) return;
+
+  const prIds = prs.map(p => p.id);
+  const prReviewersRows = await db('pr_reviewers').whereIn('pull_request_id', prIds);
+  const prCommentsRows = await db('pr_comment_threads').whereIn('pull_request_id', prIds);
+  const checkRows = await db('pr_checks').whereIn('pull_request_id', prIds);
+  const cyclesRows = await db('review_cycles').whereIn('pull_request_id', prIds);
+
+  for (const pr of prs) {
+    const ageEnd = pr.state === 'closed' ? (pr.closed_at || pr.merged_at || new Date()) : new Date();
+    const bizHoursAge = calculateBusinessHours(pr.created_at, ageEnd, bizConfig);
+    pr.business_hours_age = bizHoursAge;
+
+    if (pr.state === 'closed') {
+      await db('pull_requests').where({ id: pr.id }).update({
+        business_hours_age: bizHoursAge,
+        last_analyzed_at: new Date(),
+      });
+      continue;
+    }
+
+    const thisReviewers = prReviewersRows.filter(r => r.pull_request_id === pr.id);
+    const thisComments = prCommentsRows.filter(c => c.pull_request_id === pr.id);
+    const thisChecks = checkRows.filter(c => c.pull_request_id === pr.id);
+    const thisCycles = cyclesRows.filter(c => c.pull_request_id === pr.id);
+
+    const { actionItems, pendingOnSummary } = determineActionItems(
+      pr, thisReviewers, thisComments, thisChecks, bizConfig
+    );
+
+    const healthStatus = classifyHealth(pr, actionItems, thisCycles.length, bizConfig);
+    const businessHoursWaiting = actionItems.length > 0
+      ? Math.max(...actionItems.map(a => a.waiting_biz_hours || 0))
+      : 0;
+
+    await db('pull_requests').where({ id: pr.id }).update({
+      business_hours_age: bizHoursAge,
+      business_hours_waiting: businessHoursWaiting,
+      health_status: healthStatus,
+      pending_on_summary: pendingOnSummary,
+      last_analyzed_at: new Date(),
+    });
+
+    await db('pr_action_items').where({ pull_request_id: pr.id }).del();
+    if (actionItems.length > 0) {
+      await db('pr_action_items').insert(actionItems.map(a => ({
+        pull_request_id: pr.id,
+        ...a
+      })));
+    }
+  }
+
+  // Recalculate historical snapshots for this repo so Trends charts reflect new business hours config
+  const snapshots = await db('pr_snapshots').where({ repository_id: repositoryId });
+  for (const snap of snapshots) {
+    const snapDate = new Date(snap.snapshot_at);
+    const openAtSnap = prs.filter(p => {
+      const created = new Date(p.created_at);
+      const closed = p.closed_at ? new Date(p.closed_at) : null;
+      return created <= snapDate && (!closed || closed > snapDate);
+    });
+
+    if (openAtSnap.length > 0) {
+      const ages = openAtSnap.map(p => calculateBusinessHours(p.created_at, snapDate, bizConfig));
+      const avgAge = Math.round(ages.reduce((a, b) => a + b, 0) / ages.length * 10) / 10;
+      
+      const healthy = ages.filter(a => a <= 24).length;
+      const attention = ages.filter(a => a > 24 && a <= 72).length;
+      const aging = ages.filter(a => a > 72 && a <= 160).length;
+      const critical = ages.filter(a => a > 160).length;
+
+      await db('pr_snapshots').where({ id: snap.id }).update({
+        avg_pr_age_hours: avgAge,
+        healthy_count: healthy,
+        attention_count: attention,
+        aging_count: aging,
+        critical_count: critical,
+      });
+    }
+  }
+
+  // Take a new snapshot as of now with updated numbers
+  const allOpenPRs = await db('pull_requests').where({ repository_id: repositoryId, state: 'open' });
+  const firstReviews = await db('pr_reviewers')
+    .join('pull_requests', 'pr_reviewers.pull_request_id', 'pull_requests.id')
+    .where('pull_requests.repository_id', repositoryId)
+    .whereNotNull('pr_reviewers.first_reviewed_at')
+    .select('pull_requests.created_at', 'pr_reviewers.first_reviewed_at', 'pr_reviewers.pull_request_id')
+    .orderBy('pr_reviewers.first_reviewed_at', 'asc');
+
+  const firstReviewByPR = {};
+  firstReviews.forEach(r => {
+    if (!firstReviewByPR[r.pull_request_id]) {
+      firstReviewByPR[r.pull_request_id] = { created_at: r.created_at, first_reviewed_at: r.first_reviewed_at };
+    }
+  });
+
+  const firstReviewTimes = Object.values(firstReviewByPR)
+    .map(r => {
+      const created = new Date(r.created_at).getTime();
+      const reviewed = new Date(r.first_reviewed_at).getTime();
+      return (reviewed - created) / (1000 * 60 * 60);
+    })
+    .filter(h => h >= 0 && h < 8760);
+
+  const avgFirstReviewHours = firstReviewTimes.length > 0
+    ? Math.round(firstReviewTimes.reduce((a, b) => a + b, 0) / firstReviewTimes.length * 10) / 10
+    : null;
+
+  const snapshotData = {
+    repository_id: repositoryId,
+    snapshot_at: new Date(),
+    total_open_prs: allOpenPRs.length,
+    healthy_count: allOpenPRs.filter(p => p.health_status === 'on_track').length,
+    attention_count: allOpenPRs.filter(p => p.health_status === 'needs_attention').length,
+    aging_count: allOpenPRs.filter(p => p.health_status === 'at_risk').length,
+    critical_count: allOpenPRs.filter(p => p.health_status === 'critical').length,
+    waiting_for_author_count: allOpenPRs.filter(p => p.pending_on_summary && p.pending_on_summary.includes('Author')).length,
+    waiting_for_reviewer_count: allOpenPRs.filter(p => !p.pending_on_summary || !p.pending_on_summary.includes('Author')).length,
+    avg_pr_age_hours: allOpenPRs.length > 0
+      ? Math.round(allOpenPRs.reduce((s, p) => s + (p.business_hours_age || 0), 0) / allOpenPRs.length * 10) / 10
+      : 0,
+    avg_first_review_hours: avgFirstReviewHours,
+  };
+
+  await db('pr_snapshots').insert(snapshotData);
+}
+
+module.exports = { synchronizeRepository, recalculateRepository };
