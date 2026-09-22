@@ -31,7 +31,8 @@ function resetApiCallCount() {
 async function fetchPullRequests(owner, repo, state = 'open', perPage = 100, filters = []) {
   if (filters && filters.length > 0) {
     const filterQuery = filters.join(' ');
-    const q = `repo:${owner}/${repo} type:pr state:${state} ${filterQuery}`;
+    const stateFilter = state === 'all' ? '' : `state:${state}`;
+    const q = `repo:${owner}/${repo} type:pr ${stateFilter} ${filterQuery}`.trim();
     const response = await octokit.search.issuesAndPullRequests({
       q,
       per_page: perPage,
@@ -99,6 +100,15 @@ async function fetchPREvents(owner, repo, issueNumber) {
   });
 }
 
+async function fetchPRDetail(owner, repo, prNumber) {
+  const { data } = await octokit.pulls.get({
+    owner,
+    repo,
+    pull_number: prNumber,
+  });
+  return data;
+}
+
 async function getRateLimit() {
   const { data } = await octokit.rateLimit.get();
   return {
@@ -110,6 +120,7 @@ async function getRateLimit() {
 
 module.exports = {
   fetchPullRequests,
+  fetchPRDetail,
   fetchPRComments,
   fetchCheckRuns,
   fetchReviews,

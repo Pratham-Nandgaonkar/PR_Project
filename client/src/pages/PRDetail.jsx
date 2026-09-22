@@ -114,10 +114,10 @@ export default function PRDetail() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-y-4 gap-x-8 text-sm">
           <div><span className="text-slate-400 w-32 inline-block">Author:</span> <span className="font-medium text-slate-200">{pr.author_login}</span></div>
           <div><span className="text-slate-400 w-32 inline-block">Created:</span> <span className="text-slate-200">{formatDate(pr.created_at)} ({timeAgo(pr.created_at)})</span></div>
-          <div><span className="text-slate-400 w-32 inline-block">Branches:</span> <span className="text-slate-300 font-mono text-xs">{pr.base_branch}</span> &larr; <span className="text-slate-300 font-mono text-xs">{pr.head_branch}</span></div>
+          <div><span className="text-slate-400 w-32 inline-block">Branches:</span> <span className="text-slate-300 font-mono text-xs">{pr.base_ref}</span> &larr; <span className="text-slate-300 font-mono text-xs">{pr.head_ref}</span></div>
           <div>
             <span className="text-slate-400 w-32 inline-block">Changes:</span> 
-            <span className="text-green-400">+{pr.additions}</span> <span className="text-red-400">-{pr.deletions}</span> in {pr.changed_files} files ({pr.commits_count} commits)
+            <span className="text-green-400">+{pr.additions}</span> <span className="text-red-400">-{pr.deletions}</span> in {pr.changed_files_count} files ({pr.commits_count} commits)
           </div>
           <div><span className="text-slate-400 w-32 inline-block">Review Cycles:</span> <span className="text-slate-200">{pr.review_cycles_count || 0}</span></div>
           <div>
@@ -208,14 +208,14 @@ export default function PRDetail() {
                   <td className="px-4 py-3">{cycle.cycle_number}</td>
                   <td className="px-4 py-3">{cycle.reviewer_login}</td>
                   <td className="px-4 py-3">
-                    {cycle.outcome ? (
-                      <span className={clsx("px-2 py-1 rounded-full text-xs", cycle.outcome === 'APPROVED' ? 'bg-green-500/10 text-green-400' : cycle.outcome === 'CHANGES_REQUESTED' ? 'bg-orange-500/10 text-orange-400' : 'bg-slate-500/10 text-slate-400')}>
-                        {cycle.outcome}
+                    {cycle.review_state ? (
+                      <span className={clsx("px-2 py-1 rounded-full text-xs", cycle.review_state === 'APPROVED' ? 'bg-green-500/10 text-green-400' : cycle.review_state === 'CHANGES_REQUESTED' ? 'bg-orange-500/10 text-orange-400' : 'bg-slate-500/10 text-slate-400')}>
+                        {cycle.review_state}
                       </span>
                     ) : '-'}
                   </td>
-                  <td className="px-4 py-3">{formatDuration(cycle.reviewer_response_time_hours)}</td>
-                  <td className="px-4 py-3">{formatDuration(cycle.author_response_time_hours)}</td>
+                  <td className="px-4 py-3">{cycle.reviewer_response_hours != null ? formatDuration(cycle.reviewer_response_hours) : '-'}</td>
+                  <td className="px-4 py-3">{cycle.author_response_hours != null ? formatDuration(cycle.author_response_hours) : '-'}</td>
                 </tr>
               ))}
             </tbody>

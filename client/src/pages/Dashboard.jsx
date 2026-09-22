@@ -4,7 +4,7 @@ import { useRepository } from '../hooks/useRepository';
 import { useFetch } from '../hooks/useFetch';
 import { fetchSummary, fetchBottlenecks } from '../lib/api';
 import { formatDuration, getHealthBg, getActionItemLabel } from '../lib/utils';
-import { GitPullRequest, AlertTriangle, Clock, Eye, UserX, Timer } from 'lucide-react';
+import { GitPullRequest, GitMerge, XCircle, AlertTriangle, Clock, Eye, UserX, Timer } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
 import clsx from 'clsx';
 
@@ -66,12 +66,14 @@ export default function Dashboard() {
     <div className="space-y-6 animate-fade-in">
       <h1 className="text-2xl font-bold">Dashboard</h1>
       
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        <MetricCard title="Total Open PRs" value={summary.totalOpen} icon={GitPullRequest} colorClass="text-blue-400" bgColorClass="bg-blue-500/10" />
-        <MetricCard title="Critical PRs" value={summary.critical} icon={AlertTriangle} colorClass="text-red-400" bgColorClass="bg-red-500/10" />
-        <MetricCard title="At Risk PRs" value={summary.at_risk} icon={Clock} colorClass="text-orange-400" bgColorClass="bg-orange-500/10" />
-        <MetricCard title="Waiting for Review" value={summary.waitingForReviewer} icon={Eye} colorClass="text-blue-400" bgColorClass="bg-blue-500/10" />
-        <MetricCard title="Waiting for Author" value={summary.waitingForAuthor} icon={UserX} colorClass="text-yellow-400" bgColorClass="bg-yellow-500/10" />
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
+        <MetricCard title="Total Open PRs" value={summary.totalOpen ?? 0} icon={GitPullRequest} colorClass="text-blue-400" bgColorClass="bg-blue-500/10" />
+        <MetricCard title="Total Merged" value={summary.totalMerged ?? 0} icon={GitMerge} colorClass="text-purple-400" bgColorClass="bg-purple-500/10" />
+        <MetricCard title="Total Closed" value={summary.totalClosed ?? 0} icon={XCircle} colorClass="text-slate-400" bgColorClass="bg-slate-500/10" />
+        <MetricCard title="Critical PRs" value={summary.critical ?? 0} icon={AlertTriangle} colorClass="text-red-400" bgColorClass="bg-red-500/10" />
+        <MetricCard title="At Risk PRs" value={summary.at_risk ?? 0} icon={Clock} colorClass="text-orange-400" bgColorClass="bg-orange-500/10" />
+        <MetricCard title="Waiting for Review" value={summary.waitingForReviewer ?? 0} icon={Eye} colorClass="text-blue-400" bgColorClass="bg-blue-500/10" />
+        <MetricCard title="Waiting for Author" value={summary.waitingForAuthor ?? 0} icon={UserX} colorClass="text-yellow-400" bgColorClass="bg-yellow-500/10" />
         <MetricCard title="Avg PR Age" value={formatDuration(summary.avgAgeHours)} icon={Timer} colorClass="text-emerald-400" bgColorClass="bg-emerald-500/10" />
       </div>
 

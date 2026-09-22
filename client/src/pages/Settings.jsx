@@ -79,13 +79,26 @@ export default function Settings() {
     setSyncingRepo(id);
     try {
       await triggerSync(id);
-      if (id === selectedRepoId) {
-        const status = await fetchSyncStatus(id);
-        setSyncStatus(status);
-      }
+      const pollStatus = async () => {
+        try {
+          const status = await fetchSyncStatus(id);
+          if (id === selectedRepoId) {
+            setSyncStatus(status);
+          }
+          if (!status.is_syncing && !status.isRunning) {
+            setSyncingRepo(null);
+            await refetch();
+          } else {
+            setTimeout(pollStatus, 3500);
+          }
+        } catch (e) {
+          setSyncingRepo(null);
+          await refetch();
+        }
+      };
+      setTimeout(pollStatus, 3500);
     } catch (err) {
       alert(`Sync failed: ${err.message}`);
-    } finally {
       setSyncingRepo(null);
     }
   };
@@ -99,8 +112,8 @@ export default function Settings() {
         sync_filters: syncFilters
       });
       await refetch();
-      setRepoSettingsSuccess('Settings saved successfully');
-      setTimeout(() => setRepoSettingsSuccess(''), 3000);
+      setRepoSettingsSuccess('Settings saved and metrics recalculated successfully');
+      setTimeout(() => setRepoSettingsSuccess(''), 4000);
     } catch (err) {
       alert(`Failed to save settings: ${err.message}`);
     } finally {

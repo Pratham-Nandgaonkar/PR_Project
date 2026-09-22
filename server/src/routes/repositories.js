@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
+const { recalculateRepository } = require('../services/sync');
 
 // GET /api/repositories
 router.get('/', async (req, res) => {
@@ -75,6 +76,14 @@ router.put('/:id', async (req, res) => {
     if (!updated) {
       return res.status(404).json({ error: 'Repository not found' });
     }
+
+    // Immediately recalculate all PR metrics, action items, health statuses, and trends snapshots using new settings
+    try {
+      await recalculateRepository(parseInt(id));
+    } catch (recalcErr) {
+      console.error('Error recalculating repository metrics after settings update:', recalcErr);
+    }
+
     res.json(updated);
   } catch (error) {
     console.error('Error updating repository:', error);

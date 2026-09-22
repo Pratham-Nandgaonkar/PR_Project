@@ -7,7 +7,7 @@ import { timeAgo } from '../lib/utils';
 import clsx from 'clsx';
 
 export default function Layout() {
-  const { selectedRepo, selectedRepoId } = useRepository();
+  const { selectedRepo, selectedRepoId, refetch } = useRepository();
   const [syncStatus, setSyncStatus] = useState(null);
   const [isSyncing, setIsSyncing] = useState(false);
 
@@ -17,7 +17,7 @@ export default function Layout() {
       try {
         const status = await fetchSyncStatus(selectedRepoId);
         setSyncStatus(status);
-        setIsSyncing(status.is_syncing);
+        setIsSyncing(!!status.is_syncing);
       } catch (e) {
         console.error('Failed to fetch sync status', e);
       }
@@ -32,8 +32,22 @@ export default function Layout() {
     try {
       setIsSyncing(true);
       await triggerSync(selectedRepoId);
-      const status = await fetchSyncStatus(selectedRepoId);
-      setSyncStatus(status);
+      const poll = async () => {
+        try {
+          const status = await fetchSyncStatus(selectedRepoId);
+          setSyncStatus(status);
+          if (!status.is_syncing && !status.isRunning) {
+            setIsSyncing(false);
+            if (refetch) refetch();
+          } else {
+            setTimeout(poll, 3500);
+          }
+        } catch (e) {
+          setIsSyncing(false);
+          if (refetch) refetch();
+        }
+      };
+      setTimeout(poll, 3500);
     } catch (e) {
       console.error('Failed to trigger sync', e);
       setIsSyncing(false);

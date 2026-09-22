@@ -1,10 +1,27 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useRepository } from '../hooks/useRepository';
 import { useFetch } from '../hooks/useFetch';
 import { fetchTrends } from '../lib/api';
 import { formatDateShort } from '../lib/utils';
 import { LineChart, Line, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import clsx from 'clsx';
+
+// Defined outside component so it has a stable reference — prevents chart remount on every render
+function CustomTooltip({ active, payload, label }) {
+  if (active && payload && payload.length) {
+    return (
+      <div className="bg-slate-900 border border-slate-700 p-3 rounded-lg shadow-xl text-sm z-50">
+        <p className="font-bold mb-2">{label}</p>
+        {payload.map((p, i) => (
+          <p key={i} style={{ color: p.color }}>
+            {p.name}: {p.value}
+          </p>
+        ))}
+      </div>
+    );
+  }
+  return null;
+}
 
 export default function Trends() {
   const { selectedRepoId } = useRepository();
@@ -15,40 +32,26 @@ export default function Trends() {
     [selectedRepoId]
   );
 
+  // Derived filtered + formatted data — recomputes whenever data or timeRange changes
+  const chartData = useMemo(() => {
+    if (!data || data.length === 0) return [];
+
+    let filtered = data;
+    if (timeRange === '1W') filtered = data.slice(-7);
+    else if (timeRange === '1M') filtered = data.slice(-30);
+    else if (timeRange === '3M') filtered = data.slice(-90);
+    else if (timeRange === '6M') filtered = data.slice(-180);
+
+    return filtered.map(d => ({
+      ...d,
+      date: formatDateShort(d.snapshot_at),
+      avg_pr_age_days: d.avg_pr_age_hours != null ? (d.avg_pr_age_hours / 24).toFixed(1) : '0',
+    }));
+  }, [data, timeRange]);
+
   if (!selectedRepoId) return <div className="text-center text-slate-400 mt-10">Sync a repository first.</div>;
   if (loading) return <div className="text-center text-slate-400 mt-10">Loading trends...</div>;
   if (!data || data.length < 2) return <div className="text-center text-slate-400 mt-10">Not enough data yet. Snapshots are created during each sync.</div>;
-
-  // Filter data based on timeRange
-  // data from backend is ordered ASC (oldest first). We want the most recent N days.
-  let filteredData = data;
-  if (timeRange === '1W') filteredData = data.slice(-7);
-  else if (timeRange === '1M') filteredData = data.slice(-30);
-  else if (timeRange === '3M') filteredData = data.slice(-90);
-  else if (timeRange === '6M') filteredData = data.slice(-180);
-
-  // Format data for charts
-  const chartData = filteredData.map(d => ({
-    ...d,
-    date: formatDateShort(d.snapshot_at),
-    avg_pr_age_days: (d.avg_pr_age_hours / 24).toFixed(1),
-  }));
-
-  const CustomTooltip = ({ active, payload, label }) => {
-    if (active && payload && payload.length) {
-      return (
-        <div className="bg-slate-900 border border-slate-700 p-3 rounded-lg shadow-xl text-sm z-50">
-          <p className="font-bold mb-2">{label}</p>
-          {payload.map((p, i) => (
-            <p key={i} style={{ color: p.color }}>
-              {p.name}: {p.value}
-            </p>
-          ))}
-        </div>
-      );
-    }
-    return null;
-  };
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -153,3 +156,4 @@ export default function Trends() {
     </div>
   );
 }
+
