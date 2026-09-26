@@ -145,12 +145,55 @@ cd server && npm run dev
 cd client && npm run dev
 ```
 
-### 6. Configure a Repository
+### 6. Access the Application
 
-1. Open http://localhost:5173 in your browser.
-2. Navigate to the **Settings** tab.
-3. Add a valid GitHub repository (e.g., Owner: `expressjs`, Name: `express`).
-4. Click **Sync Now** to fetch pull requests up to your configured `PR_FETCH_LIMIT`.
+Open your browser and navigate to **http://localhost:5173**.
+
+---
+
+## How to Use
+
+### 1. Adding and Syncing a Repository
+1. Navigate to the **Settings** tab in the sidebar.
+2. In the **Add Repository** form, enter the repository **Owner** (e.g. `expressjs`) and **Repository Name** (e.g. `express`).
+3. Click **Add**. The backend immediately validates the repository with GitHub's API to confirm it exists.
+4. Once added, an initial sync triggers automatically (or you can click the **Sync Now** button / refresh icon anytime).
+
+> **Important — Wait a few minutes while fetching data:**
+> When syncing is triggered, the system fetches up to your configured `PR_FETCH_LIMIT` (e.g. 100 to 500+ PRs) alongside commit histories, reviews, comments, and CI check runs from the GitHub REST API.
+> **Please wait a few minutes while data is being fetched.** You will see an animated spinning indicator and `Syncing...` status. Once the sync finishes, the status updates to `Idle` with the timestamp, and all dashboard metrics will be fully populated.
+
+### 2. Monitoring the Dashboard
+* **Dashboard (`/`)**: Provides an executive overview of your repository health:
+  * **Summary Metric Cards**: Total Open PRs, Merged/Closed PRs, Critical/At Risk PR counts, Waiting for Review vs. Waiting for Author breakdown, and Average PR Age.
+  * **PR Health Distribution**: Visual breakdown of PRs classified as On Track (green), Needs Attention (yellow), At Risk (orange), or Critical (red).
+  * **Responsibility Distribution**: Identifies whether blockers are waiting on authors or reviewers.
+  * **Top Bottlenecks**: Highlights the top 10 PRs causing the longest delays with clear action items and descriptions.
+
+### 3. Inspecting PRs & Evidence Timelines
+* **Pull Requests (`/prs`)**: Search and filter open PRs by author, status, or search keywords.
+* **PR Detail Page (`/prs/:number`)**: Click on any PR number to view its full evidence-based breakdown:
+  * **Action Items & Blockers**: Explains exactly WHO is responsible for next steps and WHY.
+  * **Review Cycles**: Visual timeline of all review cycles (review submitted -> author responded -> next review).
+  * **Timeline Events**: Full audit trail of review submissions, commits, comments, and state changes.
+
+### 4. Viewing People & Trends Analytics
+* **People Analytics (`/people`)**:
+  * **Reviewer Performance**: Identifies review volume, average turnaround time, and review cycle counts.
+  * **Author Responsiveness**: Measures how quickly authors address feedback and push fixes.
+* **Historical Trends (`/trends`)**:
+  * 30-day historical aggregate snapshots tracking PR aging trends, open PR volume over time, health category distribution, and time-to-first-review.
+
+### 5. Customizing Business Hours & Work Days
+1. In the **Settings** tab, click on your repository in the **Current Repositories** table to select it.
+2. Scroll to the **Business Hours Configuration** section:
+   * **Timezone**: Select your team's operating timezone (e.g. `UTC`, `America/New_York`, `Asia/Kolkata`).
+   * **Work Days**: Click on the day bubbles (`M`, `T`, `W`, `T`, `F`, `S`, `S`) to select which days are considered working days (e.g. Mon–Fri vs. weekend days).
+   * **Start & End Time**: Set daily working hours in 24-hour format (e.g., 9 to 18).
+   * Notice the live summary displaying active days and total business hours per week (e.g. `5 active work days/week • 9 hrs/day • 45 business hrs/week`).
+3. Click **Save Changes** (or **Save Settings**). All pull request ages, waiting times, health statuses, and historical snapshots will instantly recalculate to reflect your new working calendar.
+
+---
 
 ## Environment Variables
 
