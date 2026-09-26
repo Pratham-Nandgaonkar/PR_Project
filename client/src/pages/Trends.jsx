@@ -49,14 +49,26 @@ export default function Trends() {
     }));
   }, [data, timeRange]);
 
+  const isUpdating = loading && !!data && data.length > 0;
+
   if (!selectedRepoId) return <div className="text-center text-slate-400 mt-10">Sync a repository first.</div>;
-  if (loading) return <div className="text-center text-slate-400 mt-10">Loading trends...</div>;
-  if (!data || data.length < 2) return <div className="text-center text-slate-400 mt-10">Not enough data yet. Snapshots are created during each sync.</div>;
+  if (loading && (!data || data.length === 0)) return <div className="text-center text-slate-400 mt-10">Loading trends...</div>;
+  if (!data || data.length === 0) return <div className="text-center text-slate-400 mt-10">No snapshot data found. Sync a repository first.</div>;
+
+  const showDots = chartData.length <= 1;
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className={clsx("space-y-6 transition-opacity duration-200", isUpdating && "opacity-60")}>
       <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4">
-        <h1 className="text-2xl font-bold">Historical Trends</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-bold">Historical Trends</h1>
+          {isUpdating && (
+            <div className="flex items-center gap-2 text-xs text-slate-400 bg-slate-800/80 px-2.5 py-1 rounded-md border border-slate-700">
+              <div className="w-2 h-2 rounded-full bg-blue-400 animate-ping" />
+              Updating...
+            </div>
+          )}
+        </div>
         <div className="flex bg-slate-800 p-1 rounded-lg border border-slate-700">
           {['1W', '1M', '3M', '6M', 'All'].map(range => (
             <button
@@ -72,6 +84,12 @@ export default function Trends() {
           ))}
         </div>
       </div>
+
+      {data.length === 1 && (
+        <div className="bg-blue-500/10 border border-blue-500/20 text-blue-300 text-sm px-4 py-2.5 rounded-lg">
+          Displaying current snapshot data. Historical trends will expand with each sync.
+        </div>
+      )}
       
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         
@@ -86,11 +104,11 @@ export default function Trends() {
                 <YAxis stroke="#94a3b8" fontSize={12} tickLine={false} axisLine={false} />
                 <Tooltip content={<CustomTooltip />} />
                 <Legend />
-                <Line type="monotone" dataKey="total_open_prs" name="Total" stroke="#60a5fa" strokeWidth={3} dot={false} />
-                <Line type="monotone" dataKey="healthy_count" name="Healthy" stroke="#4ade80" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="attention_count" name="Attention" stroke="#facc15" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="aging_count" name="Aging" stroke="#fb923c" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="critical_count" name="Critical" stroke="#f87171" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="total_open_prs" name="Total" stroke="#60a5fa" strokeWidth={3} dot={showDots ? { r: 5 } : false} />
+                <Line type="monotone" dataKey="healthy_count" name="Healthy" stroke="#4ade80" strokeWidth={2} dot={showDots ? { r: 4 } : false} />
+                <Line type="monotone" dataKey="attention_count" name="Attention" stroke="#facc15" strokeWidth={2} dot={showDots ? { r: 4 } : false} />
+                <Line type="monotone" dataKey="aging_count" name="Aging" stroke="#fb923c" strokeWidth={2} dot={showDots ? { r: 4 } : false} />
+                <Line type="monotone" dataKey="critical_count" name="Critical" stroke="#f87171" strokeWidth={2} dot={showDots ? { r: 4 } : false} />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -112,7 +130,7 @@ export default function Trends() {
                 <XAxis dataKey="date" stroke="#94a3b8" fontSize={12} tickLine={false} />
                 <YAxis stroke="#94a3b8" fontSize={12} tickLine={false} axisLine={false} />
                 <Tooltip content={<CustomTooltip />} />
-                <Area type="monotone" dataKey="avg_pr_age_days" name="Avg Age (Days)" stroke="#818cf8" fillOpacity={1} fill="url(#colorAge)" />
+                <Area type="monotone" dataKey="avg_pr_age_days" name="Avg Age (Days)" stroke="#818cf8" fillOpacity={1} fill="url(#colorAge)" dot={showDots ? { r: 5 } : false} />
               </AreaChart>
             </ResponsiveContainer>
           </div>

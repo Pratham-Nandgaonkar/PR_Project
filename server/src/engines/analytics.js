@@ -1,4 +1,5 @@
 const dayjs = require('dayjs');
+const { calculateBusinessHours, normalizeConfig } = require('./businessHours');
 
 function computeSummary(prs) {
   const openPRs = prs.filter(p => p.state === 'open');
@@ -175,4 +176,104 @@ function computeBottlenecks(prs, actionItems = []) {
   return bottlenecks.sort((a, b) => b.waiting_hours - a.waiting_hours);
 }
 
-module.exports = { computeSummary, computePeopleAnalytics, computeBottlenecks };
+function generateHistoricalSnapshots(prs, firstReviews = [], repositoryId, maxDays = 30, businessHoursConfig = null) {
+  if (!prs || prs.length === 0) return [];
+
+  const bizConfig = normalizeConfig(businessHoursConfig);
+
+  // Find earliest PR creation date
+  const minCreated = prs.reduce((min, p) => {
+    const d = dayjs(p.created_at);
+    return d.isBefore(min) ? d : min;
+  }, dayjs());
+
+  const daysSinceMin = Math.max(1, dayjs().diff(minCreated, 'day'));
+  const daysToGenerate = Math.min(maxDays, Math.max(7, daysSinceMin));
+
+  // Pre-process earliest first review per PR
+  const firstReviewByPR = {};
+  (firstReviews || []).forEach(r => {
+    if (!r.first_reviewed_at) return;
+    const prId = r.pull_request_id;
+    if (!firstReviewByPR[prId] || dayjs(r.first_reviewed_at).isBefore(dayjs(firstReviewByPR[prId].first_reviewed_at))) {
+      firstReviewByPR[prId] = {
+        created_at: r.created_at,
+        first_reviewed_at: r.first_reviewed_at,
+      };
+    }
+  });
+
+  const snapshots = [];
+  for (let i = daysToGenerate; i >= 1; i--) {
+    const targetDate = dayjs().subtract(i, 'day').endOf('day');
+
+    const openOnDay = prs.filter(pr => {
+      const created = dayjs(pr.created_at);
+      const closed = pr.closed_at ? dayjs(pr.closed_at) : null;
+      return created.isBefore(targetDate) && (!closed || closed.isAfter(targetDate));
+    });
+
+    let healthy = 0, attention = 0, aging = 0, critical = 0;
+    let totalAgeHours = 0;
+    let waitingAuthor = 0, waitingReviewer = 0;
+
+    openOnDay.forEach(pr => {
+      const ageHours = calculateBusinessHours(pr.created_at, targetDate.toDate(), bizConfig);
+      totalAgeHours += ageHours;
+
+      if (pr.is_draft) {
+        healthy++;
+      } else if (ageHours > 160) {
+        critical++;
+      } else if (ageHours > 72) {
+        aging++;
+      } else if (ageHours > 24) {
+        attention++;
+      } else {
+        healthy++;
+      }
+
+      if (pr.pending_on_summary && pr.pending_on_summary.includes('Author')) {
+        waitingAuthor++;
+      } else {
+        waitingReviewer++;
+      }
+    });
+
+    const avgAgeHours = openOnDay.length > 0
+      ? Math.round((totalAgeHours / openOnDay.length) * 10) / 10
+      : 0;
+
+    const historicalReviews = Object.values(firstReviewByPR)
+      .filter(r => dayjs(r.first_reviewed_at).isBefore(targetDate))
+      .map(r => {
+        const created = new Date(r.created_at).getTime();
+        const reviewed = new Date(r.first_reviewed_at).getTime();
+        return (reviewed - created) / (1000 * 60 * 60);
+      })
+      .filter(h => h >= 0 && h < 8760);
+
+    const avgFirstReviewHours = historicalReviews.length > 0
+      ? Math.round(historicalReviews.reduce((a, b) => a + b, 0) / historicalReviews.length * 10) / 10
+      : null;
+
+    snapshots.push({
+      repository_id: repositoryId,
+      snapshot_at: targetDate.toDate(),
+      total_open_prs: openOnDay.length,
+      healthy_count: healthy,
+      attention_count: attention,
+      aging_count: aging,
+      critical_count: critical,
+      waiting_for_author_count: waitingAuthor,
+      waiting_for_reviewer_count: waitingReviewer,
+      avg_pr_age_hours: avgAgeHours,
+      avg_first_review_hours: avgFirstReviewHours,
+      details: JSON.stringify({}),
+    });
+  }
+
+  return snapshots;
+}
+
+module.exports = { computeSummary, computePeopleAnalytics, computeBottlenecks, generateHistoricalSnapshots };

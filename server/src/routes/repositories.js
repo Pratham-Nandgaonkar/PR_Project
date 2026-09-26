@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
+const github = require('../services/github');
 const { recalculateRepository } = require('../services/sync');
 
 // GET /api/repositories
@@ -22,22 +23,45 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'Owner and name are required' });
     }
 
+    const trimmedOwner = owner.trim();
+    const trimmedName = name.trim();
+
     // Validate format
     const validPattern = /^[a-zA-Z0-9._-]+$/;
-    if (!validPattern.test(owner) || !validPattern.test(name)) {
+    if (!validPattern.test(trimmedOwner) || !validPattern.test(trimmedName)) {
       return res.status(400).json({ error: 'Invalid owner or repository name format' });
     }
 
-    // Check uniqueness
-    const existing = await db('repositories').where({ owner, name }).first();
+    // Verify repository exists on GitHub before adding
+    let verifiedRepo;
+    try {
+      const check = await github.verifyRepository(trimmedOwner, trimmedName);
+      if (!check.exists) {
+        return res.status(404).json({ error: check.error || `Repository "${trimmedOwner}/${trimmedName}" was not found on GitHub` });
+      }
+      verifiedRepo = check.data;
+    } catch (ghErr) {
+      return res.status(ghErr.status || 500).json({
+        error: ghErr.message || 'Failed to verify repository with GitHub',
+      });
+    }
+
+    const canonicalOwner = verifiedRepo?.owner || trimmedOwner;
+    const canonicalName = verifiedRepo?.name || trimmedName;
+
+    // Check uniqueness (case-insensitive)
+    const existing = await db('repositories')
+      .whereRaw('LOWER(owner) = ?', [canonicalOwner.toLowerCase()])
+      .andWhereRaw('LOWER(name) = ?', [canonicalName.toLowerCase()])
+      .first();
     if (existing) {
       return res.status(409).json({ error: 'Repository already configured' });
     }
 
     const [repo] = await db('repositories').insert({
-      owner,
-      name,
-      full_name: `${owner}/${name}`,
+      owner: canonicalOwner,
+      name: canonicalName,
+      full_name: `${canonicalOwner}/${canonicalName}`,
       is_active: true,
       sync_filters: sync_filters ? JSON.stringify(sync_filters) : '[]',
       business_hours_config: business_hours_config ? JSON.stringify(business_hours_config) : null,

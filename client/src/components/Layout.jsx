@@ -65,15 +65,23 @@ export default function Layout() {
   return (
     <div className="flex h-screen w-full overflow-hidden bg-slate-900 text-slate-100 font-sans">
       <aside className="w-60 bg-slate-800 flex flex-col h-full border-r border-slate-700">
-        <div className="p-6">
-          <div className="flex items-center gap-3 text-blue-400 font-bold text-xl mb-1">
+        <div className="p-5 border-b border-slate-700">
+          <div className="flex items-center gap-2.5 text-blue-400 font-bold text-xl mb-3">
             <GitPullRequest className="w-6 h-6" />
-            PR Aging
+            <span>PR Aging</span>
           </div>
-          {selectedRepo && (
-            <div className="text-sm text-slate-400 truncate" title={selectedRepo.name}>
-              {selectedRepo.name}
+          {selectedRepo ? (
+            <div className="bg-slate-900/60 rounded-lg p-2.5 border border-slate-700/60">
+              <div className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Current Repo</div>
+              <div 
+                className="text-base font-bold text-slate-100 truncate" 
+                title={selectedRepo.full_name || `${selectedRepo.owner}/${selectedRepo.name}`}
+              >
+                {selectedRepo.full_name || `${selectedRepo.owner}/${selectedRepo.name}`}
+              </div>
             </div>
+          ) : (
+            <div className="text-xs text-slate-400">No repository configured</div>
           )}
         </div>
 

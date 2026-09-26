@@ -154,7 +154,7 @@ export default function Settings() {
             className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg disabled:opacity-50 flex items-center gap-2"
           >
             {loading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-            Add
+            {loading ? 'Verifying & Adding...' : 'Add'}
           </button>
         </form>
         {error && <div className="mt-4 p-3 bg-red-500/10 border border-red-500/20 text-red-400 rounded-lg flex items-center gap-2 text-sm"><AlertCircle className="w-4 h-4" /> {error}</div>}
@@ -333,35 +333,34 @@ export default function Settings() {
                 <label className="block text-sm text-slate-400 mb-1">Work Days</label>
                 <div className="flex gap-2 mt-2">
                   {[
-                    { v: 1, l: 'M' },
-                    { v: 2, l: 'T' },
-                    { v: 3, l: 'W' },
-                    { v: 4, l: 'T' },
-                    { v: 5, l: 'F' },
-                    { v: 6, l: 'S' },
-                    { v: 0, l: 'S' }
+                    { v: 1, l: 'M', title: 'Monday' },
+                    { v: 2, l: 'T', title: 'Tuesday' },
+                    { v: 3, l: 'W', title: 'Wednesday' },
+                    { v: 4, l: 'T', title: 'Thursday' },
+                    { v: 5, l: 'F', title: 'Friday' },
+                    { v: 6, l: 'S', title: 'Saturday' },
+                    { v: 0, l: 'S', title: 'Sunday' }
                   ].map(day => {
                     const isSelected = bhConfig.workDays?.includes(day.v);
                     return (
-                      <label 
+                      <button 
                         key={day.v} 
+                        type="button"
+                        title={day.title}
+                        onClick={() => {
+                          const current = bhConfig.workDays || [];
+                          const next = isSelected
+                            ? current.filter(d => d !== day.v)
+                            : Array.from(new Set([...current, day.v]));
+                          setBhConfig({ ...bhConfig, workDays: next });
+                        }}
                         className={clsx(
                           "flex items-center justify-center w-8 h-8 rounded-full border cursor-pointer select-none transition-colors", 
                           isSelected ? "bg-blue-500/20 border-blue-500 text-blue-400" : "bg-slate-900 border-slate-700 text-slate-400 hover:border-slate-500"
                         )}
                       >
-                        <input 
-                          type="checkbox" 
-                          className="sr-only" 
-                          checked={isSelected} 
-                          onChange={e => {
-                            const current = bhConfig.workDays || [];
-                            if (e.target.checked) setBhConfig({...bhConfig, workDays: [...current, day.v]});
-                            else setBhConfig({...bhConfig, workDays: current.filter(d => d !== day.v)});
-                          }} 
-                        />
                         <span className="text-xs font-semibold">{day.l}</span>
-                      </label>
+                      </button>
                     );
                   })}
                 </div>
@@ -388,6 +387,26 @@ export default function Settings() {
                   className="w-full bg-slate-900 border border-slate-700 rounded-md px-3 py-2 focus:outline-none focus:border-blue-500 text-sm" 
                 />
               </div>
+            </div>
+
+            <div className="mt-4 p-3 bg-slate-900/60 rounded-lg border border-slate-700/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-slate-400">
+              <div>
+                <span className="text-slate-300 font-medium">Business Schedule:</span>{' '}
+                {bhConfig.workDays?.length || 0} active work days/week &bull;{' '}
+                {Math.max(0, (bhConfig.workEnd ?? 18) - (bhConfig.workStart ?? 9))} hrs/day &bull;{' '}
+                <span className="text-blue-400 font-medium">
+                  {(bhConfig.workDays?.length || 0) * Math.max(0, (bhConfig.workEnd ?? 18) - (bhConfig.workStart ?? 9))} business hrs/week
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={handleSaveRepoSettings}
+                disabled={repoSettingsLoading}
+                className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-md disabled:opacity-50 flex items-center gap-1.5 self-end sm:self-auto"
+              >
+                {repoSettingsLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                Save Changes
+              </button>
             </div>
           </div>
         </div>

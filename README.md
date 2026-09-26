@@ -64,21 +64,70 @@ cd ../client && npm install
 cd ..
 ```
 
-### 2. Create Database
+### 2. Create PostgreSQL Database
+
+Open your terminal or command prompt and log into PostgreSQL using the `psql` command-line tool:
 
 ```bash
-createdb pr_aging_scraper
+psql -U postgres
 ```
 
-### 3. Configure Environment
+When prompted, enter your PostgreSQL password. Once inside the PostgreSQL command prompt (`postgres=#`), run the query to create the database:
+
+```sql
+CREATE DATABASE pr_aging_scraper;
+```
+
+*(Optional) You can verify the database with `\l`.* Then exit the `psql` prompt:
+
+```sql
+\q
+```
+
+### 3. Configure Environment Variables (`.env`)
+
+Copy the example environment configuration to create your `.env` file in the project root:
 
 ```bash
+# Linux / macOS
 cp .env.example .env
+
+# Windows (PowerShell)
+copy .env.example .env
 ```
 
-Edit `.env` with your database URL. Optionally add a GitHub token for higher rate limits.
+Open the newly created `.env` file and configure the following:
 
-### 4. Run Migrations
+#### A. Database Connection
+Ensure `DATABASE_URL` matches your PostgreSQL username, password, host, and database:
+```env
+DATABASE_URL=postgres://postgres:your_password@localhost:5432/pr_aging_scraper
+```
+
+#### B. Create & Add Your Own GitHub Token (Highly Recommended)
+* Without a personal access token, GitHub restricts unauthenticated requests to only **60 requests/hour**, which will quickly exhaust rate limits during repository syncs.
+* Adding a token increases your rate limit to **5,000 requests/hour**.
+* **Steps to create your token:**
+  1. Visit [GitHub Token Settings](https://github.com/settings/tokens) (or go to GitHub **Settings** → **Developer Settings** → **Personal Access Tokens** → **Tokens (classic)**).
+  2. Click **Generate new token (classic)**.
+  3. Give it a descriptive note (e.g. `PR-Aging-Scraper`) and choose an expiration duration.
+  4. For public repositories, no specific scopes are required. (For private repositories, check the `repo` scope).
+  5. Click **Generate token** and copy the generated token string.
+  6. Paste it into your `.env` file:
+     ```env
+     GITHUB_TOKEN=ghp_yourGeneratedTokenHere...
+     ```
+
+#### C. Check and Configure PR Fetch Limit (`PR_FETCH_LIMIT`)
+* Determine how many pull requests you want to ingest and analyze per repository.
+* Default is `100`. If you want to fetch and analyze more PRs (e.g., 500 or 1000), update `PR_FETCH_LIMIT`:
+  ```env
+  PR_FETCH_LIMIT=500
+  ```
+
+### 4. Run Database Migrations
+
+Run Knex migrations from the server directory to create all required database tables:
 
 ```bash
 cd server && npx knex migrate:latest
@@ -86,20 +135,22 @@ cd server && npx knex migrate:latest
 
 ### 5. Start Development Servers
 
+Run both the backend API and frontend Vite development server:
+
 ```bash
-# Terminal 1 — Backend (port 3001)
+# Terminal 1 — Backend API (port 3001)
 cd server && npm run dev
 
-# Terminal 2 — Frontend (port 5173)
+# Terminal 2 — Frontend UI (port 5173)
 cd client && npm run dev
 ```
 
 ### 6. Configure a Repository
 
-1. Open http://localhost:5173
-2. Navigate to **Settings**
-3. Add a repository (e.g., Owner: `facebook`, Name: `react`)
-4. Click **Sync Now** to fetch PR data
+1. Open http://localhost:5173 in your browser.
+2. Navigate to the **Settings** tab.
+3. Add a valid GitHub repository (e.g., Owner: `expressjs`, Name: `express`).
+4. Click **Sync Now** to fetch pull requests up to your configured `PR_FETCH_LIMIT`.
 
 ## Environment Variables
 
@@ -193,7 +244,6 @@ Tests cover:
 - No GitHub OAuth (uses public API or personal access token)
 - No notifications (dashboard-only output)
 - Rate limited without GitHub token for large repos
-- Timeline accuracy depends on GitHub API event availability
 - Bot accounts are not filtered (may appear in analytics)
 
 ## Future Improvements
@@ -207,7 +257,3 @@ Tests cover:
 - Export reports (CSV/PDF)
 - Custom organizational policies
 - Bot filtering
-
-## License
-
-MIT

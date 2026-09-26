@@ -35,6 +35,8 @@ export default function Dashboard() {
     [selectedRepoId]
   );
 
+  const isUpdating = (summaryLoading || bottlenecksLoading) && !!summary;
+
   if (!selectedRepoId) {
     return (
       <div className="flex items-center justify-center h-full text-slate-400">
@@ -43,8 +45,22 @@ export default function Dashboard() {
     );
   }
 
-  if (summaryLoading || bottlenecksLoading) {
-    return <div className="text-slate-400 flex justify-center mt-10">Loading dashboard...</div>;
+  if (!summary && (summaryLoading || bottlenecksLoading)) {
+    return (
+      <div className="space-y-6 animate-pulse">
+        <div className="h-8 w-44 bg-slate-800 rounded-lg" />
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className="bg-slate-800 rounded-xl border border-slate-700/60 p-5 h-24" />
+          ))}
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="bg-slate-800 rounded-xl border border-slate-700/60 p-5 h-72" />
+          <div className="bg-slate-800 rounded-xl border border-slate-700/60 p-5 h-72" />
+        </div>
+        <div className="bg-slate-800 rounded-xl border border-slate-700/60 p-5 h-64" />
+      </div>
+    );
   }
 
   if (!summary) return null;
@@ -63,8 +79,16 @@ export default function Dashboard() {
   ].filter(d => d.value > 0);
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      <h1 className="text-2xl font-bold">Dashboard</h1>
+    <div className={clsx("space-y-6 transition-opacity duration-200", isUpdating && "opacity-60")}>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold">Dashboard</h1>
+        {isUpdating && (
+          <div className="flex items-center gap-2 text-xs text-slate-400 bg-slate-800/80 px-2.5 py-1 rounded-md border border-slate-700">
+            <div className="w-2 h-2 rounded-full bg-blue-400 animate-ping" />
+            Updating...
+          </div>
+        )}
+      </div>
       
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
         <MetricCard title="Total Open PRs" value={summary.totalOpen ?? 0} icon={GitPullRequest} colorClass="text-blue-400" bgColorClass="bg-blue-500/10" />

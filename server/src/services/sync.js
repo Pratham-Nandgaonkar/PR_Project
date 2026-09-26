@@ -7,6 +7,7 @@ const { determineActionItems } = require('../engines/actionItems');
 const { classifyHealth } = require('../engines/health');
 const { calculateBusinessHours, normalizeConfig, defaultConfig } = require('../engines/businessHours');
 const { detectReviewCycles } = require('../engines/reviewCycles');
+const { generateHistoricalSnapshots } = require('../engines/analytics');
 
 async function synchronizeRepository(repositoryId) {
   const repo = await db('repositories').where({ id: repositoryId }).first();
@@ -294,6 +295,10 @@ async function synchronizeRepository(repositoryId) {
         }
       } catch (prErr) {
         console.error(`[Sync] Error processing PR #${ghPR.number}:`, prErr.message);
+        if (prErr.status === 403 && prErr.message && prErr.message.toLowerCase().includes('rate limit')) {
+          console.error('[Sync] GitHub API rate limit reached, stopping PR sync early.');
+          break;
+        }
       }
     }
 
@@ -344,6 +349,25 @@ async function synchronizeRepository(repositoryId) {
       avg_first_review_hours: avgFirstReviewHours,
     };
     await db('pr_snapshots').insert(snapshotData);
+
+    // If the repository has fewer than 2 snapshots (e.g. initial sync), backfill historical daily snapshots
+    const [{ count: snapshotCount }] = await db('pr_snapshots').where({ repository_id: repositoryId }).count();
+    if (parseInt(snapshotCount, 10) <= 1) {
+      const allRepoPRs = await db('pull_requests').where({ repository_id: repositoryId });
+      const firstReviewsData = await db('pr_reviewers')
+        .join('pull_requests', 'pr_reviewers.pull_request_id', 'pull_requests.id')
+        .where('pull_requests.repository_id', repositoryId)
+        .whereNotNull('pr_reviewers.first_reviewed_at')
+        .select('pull_requests.created_at', 'pr_reviewers.first_reviewed_at', 'pr_reviewers.pull_request_id');
+
+      const historical = generateHistoricalSnapshots(allRepoPRs, firstReviewsData, repositoryId, 30);
+      const existingSnapshots = await db('pr_snapshots').where({ repository_id: repositoryId });
+      const existingDates = new Set(existingSnapshots.map(s => dayjs(s.snapshot_at).format('YYYY-MM-DD')));
+      const toInsert = historical.filter(h => !existingDates.has(dayjs(h.snapshot_at).format('YYYY-MM-DD')));
+      if (toInsert.length > 0) {
+        await db.batchInsert('pr_snapshots', toInsert, 50);
+      }
+    }
 
     await db('repositories').where({ id: repositoryId }).update({ last_synced_at: new Date() });
 
@@ -436,7 +460,7 @@ async function recalculateRepository(repositoryId) {
   }
 
   // Recalculate historical snapshots for this repo so Trends charts reflect new business hours config
-  const snapshots = await db('pr_snapshots').where({ repository_id: repositoryId });
+  const snapshots = await db('pr_snapshots').where({ repository_id: repositoryId }).orderBy('snapshot_at', 'asc');
   for (const snap of snapshots) {
     const snapDate = new Date(snap.snapshot_at);
     const openAtSnap = prs.filter(p => {
@@ -453,18 +477,38 @@ async function recalculateRepository(repositoryId) {
       const attention = ages.filter(a => a > 24 && a <= 72).length;
       const aging = ages.filter(a => a > 72 && a <= 160).length;
       const critical = ages.filter(a => a > 160).length;
+      const waitingAuthor = openAtSnap.filter(p => p.pending_on_summary && p.pending_on_summary.includes('Author')).length;
+      const waitingReviewer = openAtSnap.length - waitingAuthor;
 
       await db('pr_snapshots').where({ id: snap.id }).update({
+        total_open_prs: openAtSnap.length,
         avg_pr_age_hours: avgAge,
         healthy_count: healthy,
         attention_count: attention,
         aging_count: aging,
         critical_count: critical,
+        waiting_for_author_count: waitingAuthor,
+        waiting_for_reviewer_count: waitingReviewer,
       });
     }
   }
 
-  // Take a new snapshot as of now with updated numbers
+  // Deduplicate any multiple snapshots on the same day for this repo
+  const updatedSnaps = await db('pr_snapshots').where({ repository_id: repositoryId }).orderBy('snapshot_at', 'asc');
+  const seenDays = new Map();
+  const toDelete = [];
+  for (const s of updatedSnaps) {
+    const day = dayjs(s.snapshot_at).format('YYYY-MM-DD');
+    if (seenDays.has(day)) {
+      toDelete.push(seenDays.get(day));
+    }
+    seenDays.set(day, s.id);
+  }
+  if (toDelete.length > 0) {
+    await db('pr_snapshots').whereIn('id', toDelete).del();
+  }
+
+  // Update today's snapshot if it already exists, or insert new
   const allOpenPRs = await db('pull_requests').where({ repository_id: repositoryId, state: 'open' });
   const firstReviews = await db('pr_reviewers')
     .join('pull_requests', 'pr_reviewers.pull_request_id', 'pull_requests.id')
@@ -492,6 +536,9 @@ async function recalculateRepository(repositoryId) {
     ? Math.round(firstReviewTimes.reduce((a, b) => a + b, 0) / firstReviewTimes.length * 10) / 10
     : null;
 
+  const todayStr = dayjs().format('YYYY-MM-DD');
+  const existingTodaySnap = updatedSnaps.find(s => dayjs(s.snapshot_at).format('YYYY-MM-DD') === todayStr && !toDelete.includes(s.id));
+
   const snapshotData = {
     repository_id: repositoryId,
     snapshot_at: new Date(),
@@ -508,7 +555,11 @@ async function recalculateRepository(repositoryId) {
     avg_first_review_hours: avgFirstReviewHours,
   };
 
-  await db('pr_snapshots').insert(snapshotData);
+  if (existingTodaySnap) {
+    await db('pr_snapshots').where({ id: existingTodaySnap.id }).update(snapshotData);
+  } else {
+    await db('pr_snapshots').insert(snapshotData);
+  }
 }
 
 module.exports = { synchronizeRepository, recalculateRepository };

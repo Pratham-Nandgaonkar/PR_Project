@@ -14,11 +14,13 @@ export default function People() {
     [selectedRepoId]
   );
 
+  const isUpdating = loading && !!data;
+
   if (!selectedRepoId) {
     return <div className="text-slate-400 mt-10 text-center">No people data. Sync a repository first.</div>;
   }
 
-  if (loading) {
+  if (loading && !data) {
     return <div className="text-slate-400 mt-10 text-center">Loading people analytics...</div>;
   }
 
@@ -37,9 +39,17 @@ export default function People() {
   };
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className={clsx("space-y-6 transition-opacity duration-200", isUpdating && "opacity-60")}>
       <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
-        <h1 className="text-2xl font-bold">People Analytics</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-bold">People Analytics</h1>
+          {isUpdating && (
+            <div className="flex items-center gap-2 text-xs text-slate-400 bg-slate-800/80 px-2.5 py-1 rounded-md border border-slate-700">
+              <div className="w-2 h-2 rounded-full bg-blue-400 animate-ping" />
+              Updating...
+            </div>
+          )}
+        </div>
         <div className="bg-slate-800 p-1 rounded-lg flex border border-slate-700">
           <button
             className={clsx('px-4 py-2 rounded-md text-sm font-medium transition-colors', tab === 'reviewers' ? 'bg-slate-700 text-white shadow-sm' : 'text-slate-400 hover:text-white')}
